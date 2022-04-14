@@ -429,8 +429,46 @@ class KmeansBased(Defense):
     def exec(self, client_models, num_dps, net_avg, net_freq, g_user_indices, round, device=torch.device("cuda"), *args, **kwargs):
         from sklearn.cluster import KMeans
         
+        # FIRST, WE USE KRUM AS A TRUSTED CLIENT
+        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        neighbor_distances = []
+        for i, g_i in enumerate(vectorize_nets):
+            distance = []
+            for j in range(i+1, len(vectorize_nets)):
+                if i != j:
+                    g_j = vectorize_nets[j]
+                    distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
+            neighbor_distances.append(distance)
+
+        # compute scores
+        nb_in_score = self.num_workers-self.s-2
+        scores = []
+        for i, g_i in enumerate(vectorize_nets):
+            dists = []
+            for j, g_j in enumerate(vectorize_nets):
+                if j == i:
+                    continue
+                if j < i:
+                    dists.append(neighbor_distances[j][i - j - 1])
+                else:
+                    dists.append(neighbor_distances[i][j - i - 1])
+            # alternative to topk in pytorch and tensorflow
+            topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
+            scores.append(sum(np.take(dists, topk_ind)))
+
+        # GET THE MOST TRUSTWORTHY CLIENT:
+        i_star = scores.index(min(scores))
+        logger.info("@@@@ The chosen one is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
+        trusted_model = client_models[0] # slicing which doesn't really matter
+        load_model_weight(trusted_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
+        # neo_net_list = [aggregated_model]
+        logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(trusted_model.parameters())).item()))
+
+        # START COMPARE DISTANCES BETWEEN ALL CLIENTS AND TRUSTED MODEL
         total_client = len(client_models)
-        bias_list, weight_list, avg_bias, avg_weight = extract_classifier_layer(client_models, net_avg)
+        # bias_list, weight_list, avg_bias, avg_weight = extract_classifier_layer(client_models, net_avg)
+        bias_list, weight_list, avg_bias, avg_weight = extract_classifier_layer(client_models, trusted_model) # --> Use trusted model as a baseline instead of previous aggregated model.
+        
         eucl_dis, cs_dis = get_distance_on_avg_net(weight_list, avg_weight, total_client)
         norm_cs_data = min_max_scale(cs_dis)
         norm_eu_data = 1.0 - min_max_scale(eucl_dis)
