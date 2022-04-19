@@ -546,11 +546,14 @@ class KrMLRFL(Defense):
     we implement the robust aggregator at: https://papers.nips.cc/paper/6617-machine-learning-with-adversaries-byzantine-tolerant-gradient-descent.pdf
     and we integrate both krum and multi-krum in this single class
     """
-    def __init__(self, num_workers, num_adv, num_valid = 1, *args, **kwargs):
+    def __init__(self, num_workers, num_clients, num_adv, num_valid = 1, *args, **kwargs):
         # assert (mode in ("krum", "multi-krum"))
         self.num_valid = num_valid
         self.num_workers = num_workers
+        self.num_clients = num_clients
         self.s = num_adv
+        self.client_scores = [0.0 for _ in range(num_clients)]
+        self.gamma = 0.5
 
     def exec(self, client_models, num_dps,net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, device, *args, **kwargs):
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
@@ -583,12 +586,6 @@ class KrMLRFL(Defense):
         if self.num_valid == 1:
             i_star = scores.index(min(scores))
             logger.info("@@@@ The chosen trusted worker is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
-            # aggregated_model = client_models[0] # slicing which doesn't really matter
-            # load_model_weight(aggregated_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
-            # neo_net_list = [aggregated_model]
-            # logger.info("Norm of the chosen trusted worker: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
-            # neo_net_freq = [1.0]
-            # return neo_net_list, neo_net_freq
             trusted_models.append(i_star)
         else:
             # topk_ind = np.argpartition(scores, nb_in_score+2)[:nb_in_score+2]
@@ -596,51 +593,25 @@ class KrMLRFL(Defense):
             
             # we reconstruct the weighted averaging here:
             selected_num_dps = np.array(num_dps)[topk_ind]
-            # reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
-
-            # logger.info("Num data points: {}".format(num_dps))
             logger.info("Num selected data points: {}".format(selected_num_dps))
             logger.info("The chosen ones are users: {}, which are global users: {}".format(topk_ind, [g_user_indices[ti] for ti in topk_ind]))
-            #aggregated_grad = np.mean(np.array(vectorize_nets)[topk_ind, :], axis=0)
-            # aggregated_grad = np.average(np.array(vectorize_nets)[topk_ind, :], weights=reconstructed_freq, axis=0).astype(np.float32)
-
-            # aggregated_model = client_models[0] # slicing which doesn't really matter
-            # load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
-            # neo_net_list = [aggregated_model]
-            #logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
-            # neo_net_freq = [1.0]
-            # return neo_net_list, neo_net_freq
 
             for ind in topk_ind:
                 trusted_models.append(ind)
         
         # From now on, trusted_models contain the index base models treated as valid users.
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
-        # pseudo_avg_w = vectorize_net(pseudo_avg_net).detach().cpu().numpy()
-        # baseline_net = self.weighted_average_oracle(vectorize_nets, net_freq)
-        # glob_model = client_models[0]
-        # load_model_weight(glob_model, torch.from_numpy(baseline_net.astype(np.float32)).to(device)) 
         bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight = extract_classifier_layer(client_models, pseudo_avg_net, net_avg)
         t_score, raw_t_score = self.get_trustworthy_scores(trusted_models, weight_update)
         c_score = self.get_contribution_scores(trusted_models, weight_update, glob_update)
         
-        # print("trustworthy score is: ", t_score)
-        # print("contribution score is: ", c_score)
-        
         f_score = [t_score[i] + c_score[i] for i in range(len(t_score))]
-        # print("f_score: ", f_score)
-        # pred_attackers = pred_attackers_indx = np.argwhere(np.asarray(f_score) == 0).flatten()
-        # pred_attackers = pred_attackers_indx = np.argwhere(np.asarray(t_score) == 0).flatten()
-        # pred_attackers_indx = np.argwhere(np.asarray(t_score) == 0).flatten()
         participated_attackers = []
         for in_, id_ in enumerate(g_user_indices):
             if id_ in selected_attackers:
                 participated_attackers.append(in_)
         print("At round: ", round)
-        # print("pred_attackers_indx: ", pred_attackers_indx)
         print("real attackers indx: ", participated_attackers)
-        # print("global_pred_attackers_indx: ", [g_user_indices[ind_] for ind_ in pred_attackers_indx])
-        # global_pred_attackers_indx = [g_user_indices[ind_] for ind_ in pred_attackers_indx]
 
         print("trustworthy score is: ", t_score)
         print("contribution score is: ", c_score)
@@ -651,13 +622,24 @@ class KrMLRFL(Defense):
         print("f_score is: ", f_score)
         # self.get_predicted_attackers(weight_list, avg_weight, weight_update, 10)
         temp_score = self.get_predicted_attackers(weight_list, prev_avg_weight, weight_update, 10)
+        raw_t_score = raw_t_score.flatten()
         print("raw_t_score: ", raw_t_score)
+
         print("raw_temp_score: ", temp_score)
         print("raw_sum: ", [raw_t_score[i] + temp_score[i] for i in range(10)])
         raw_sum = [raw_t_score[i] + temp_score[i] for i in range(10)]
         raw_sum = raw_sum/sum(raw_sum)
         raw_sum = np.asarray(raw_sum).flatten()
+
+        # Assign each client score a new value
+        for i, glob_i in enumerate(g_user_indices):
+            prev_score = self.client_scores[glob_i]
+            new_score = (1.0 - self.gamma)*prev_score + self.gamma*raw_sum[i] if prev_score > 0 else raw_sum[i]
+            self.client_scores[glob_i] = new_score
+            raw_sum[i] = new_score
+        
         # mean_sum = sum(raw_sum)/10
+        print("raw_sum: ", raw_sum)
         pred_att_idxs = (-raw_sum).argsort()[:2].flatten()
         print(np.argsort(-raw_sum, axis=-1))
         print("pred_att_idxs: ", pred_att_idxs)
@@ -744,16 +726,6 @@ class KrMLRFL(Defense):
         hb_clusterer.fit(stack_dis)
         print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
         return temp_score
-
-        # print("stack_dis.shape: ", stack_dis.shape)
-        # kmeans = KMeans(n_clusters = 2)
-        # pred_labels = kmeans.fit_predict(stack_dis)
-        # print("pred_labels is: ", pred_labels)
-        # label_0 = np.count_nonzero(pred_labels == 0)
-        # label_1 = total_client - label_0
-        # cnt_pred_attackers = label_0 if label_0 <= label_1 else label_1
-        # label_att = 0 if label_0 <= label_1 else 1
-        # print("label_att: ", label_att)
         
     def weighted_average_oracle(self, points, weights):
         """Computes weighted average of atoms with specified weights
