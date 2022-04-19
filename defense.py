@@ -656,9 +656,11 @@ class KrMLRFL(Defense):
         print("raw_sum: ", [raw_t_score[i] + temp_score[i] for i in range(10)])
         raw_sum = [raw_t_score[i] + temp_score[i] for i in range(10)]
         raw_sum = raw_sum/sum(raw_sum)
-        raw_sum = np.asarray(raw_sum)
+        raw_sum = np.asarray(raw_sum).flatten()
         # mean_sum = sum(raw_sum)/10
-        pred_att_idxs = (-raw_sum).argsort()[:2]
+        pred_att_idxs = (-raw_sum).argsort()[:2].flatten()
+        print(np.argsort(-raw_sum, axis=-1))
+        print("pred_att_idxs: ", pred_att_idxs)
         print("global_pred_attackers_indx: ", [g_user_indices[ind_] for ind_ in pred_att_idxs])
         global_pred_attackers_indx = [g_user_indices[ind_] for ind_ in pred_att_idxs]
         pred_attackers_indx = pred_att_idxs.copy()
