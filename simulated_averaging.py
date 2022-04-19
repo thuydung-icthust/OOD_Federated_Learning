@@ -169,10 +169,13 @@ if __name__ == "__main__":
 
     # let's remain a copy of the global model for measuring the norm distance:
     vanilla_model = copy.deepcopy(net_avg)
+    group_name = args.dataset
+    ins_name = f"benchmark-{args.fl_mode}-{args.attack_method}-{args.defense_method}"
+    
     wandb_ins = wandb.init(project="Backdoor attack in FL",
                entity="aiotlab",
-               name=f"benchmark-{args.defense_method}",
-               group="CIFAR-10",
+               name=ins_name,
+               group=group_name,
                config={
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
             "vanilla_model":vanilla_model,
@@ -252,7 +255,7 @@ if __name__ == "__main__":
         }
 
         frequency_fl_trainer = FrequencyFederatedLearningTrainer(arguments=arguments)
-        frequency_fl_trainer.run()
+        frequency_fl_trainer.run(wandb_ins)
     elif args.fl_mode == "fixed-pool":
         arguments = {
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
