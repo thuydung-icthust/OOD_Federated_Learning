@@ -20,5 +20,5 @@ python simulated_averaging.py \
 --adv_lr 0.02 \
 --prox_attack False \
 --poison_type southwest \
---norm_bound 2 \
+--norm_bound 2 \ #epsilon
 --device=cuda:3
