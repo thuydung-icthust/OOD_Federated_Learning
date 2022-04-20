@@ -171,10 +171,13 @@ if __name__ == "__main__":
     project_name = f"{args.defense_method} {args.attack_method}"
     group_name = f"{args.dataset} {args.attack_method}"
     vanilla_model = copy.deepcopy(net_avg)
+    group_name = args.dataset
+    ins_name = f"benchmark-{args.fl_mode}-{args.attack_method}-{args.defense_method}"
+    
     wandb_ins = wandb.init(project="Backdoor attack in FL",
                entity="aiotlab",
-               name=f"{project_name}",
-               group="CIFAR-10",
+               name=ins_name,
+               group=group_name,
                config={
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
             "vanilla_model":vanilla_model,
@@ -254,7 +257,7 @@ if __name__ == "__main__":
         }
 
         frequency_fl_trainer = FrequencyFederatedLearningTrainer(arguments=arguments)
-        frequency_fl_trainer.run()
+        frequency_fl_trainer.run(wandb_ins)
     elif args.fl_mode == "fixed-pool":
         arguments = {
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,

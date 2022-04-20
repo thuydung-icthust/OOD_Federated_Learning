@@ -383,7 +383,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             NotImplementedError("Unsupported defense method !")
 
 
-    def run(self):
+    def run(self, wandb_ins=None):
         main_task_acc = []
         raw_task_acc = []
         backdoor_task_acc = []
@@ -497,7 +497,6 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                         # we can print the norm diff out for debugging
                         adv_norm_diff = calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="bad")
                         adv_norm_diff_list.append(adv_norm_diff)
-
                         if self.defense_technique == "norm-clipping-adaptive":
                             # experimental
                             norm_diff_collector.append(adv_norm_diff)
@@ -631,6 +630,17 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             main_task_acc.append(overall_acc)
             raw_task_acc.append(raw_acc)
             backdoor_task_acc.append(backdoor_acc)
+            if(wandb_ins):
+                wandb_logging = {'fl_iter': flr, 
+                            'main_task_acc': overall_acc, 
+                            'backdoor_acc': backdoor_acc, 
+                            'raw_task_acc':raw_acc, 
+                            # 'adv_norm_diff': adv_norm_diff, 
+                            'wg_norm': wg_norm_list[-1],
+                            # 'cnt_attackers': cnt_attacker,
+                            }
+                wandb_ins.log({"general": wandb_logging})
+            
 
         df = pd.DataFrame({'fl_iter': fl_iter_list, 
                             'main_task_acc': main_task_acc, 
