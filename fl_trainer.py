@@ -379,11 +379,13 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             self._defender = RFA()
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased()
+        elif arguments["defense_technique"] == "krum-multilayer":
+            self._defender = KrMLRFL(num_workers=self.part_nets_per_round, num_adv=1, num_valid=1)
         else:
             NotImplementedError("Unsupported defense method !")
 
 
-    def run(self):
+    def run(self, wandb_ins=None):
         main_task_acc = []
         raw_task_acc = []
         backdoor_task_acc = []
@@ -606,6 +608,35 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
                                                         device=self.device)
+                        elif self.defense_technique == "kmeans-based":
+                # if flr <= 50:
+                #     net_list, net_freq = self._defender.exec(client_models=net_list, 
+                #                         num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                #                         g_user_indices=selected_node_indices,
+                #                         device=self.device)
+                # else:
+                net_list, net_freq = self._defender.exec(client_models=net_list,
+                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        net_freq=net_freq,
+                                                        net_avg=self.net_avg,
+                                                        g_user_indices=selected_node_indices,
+                                                        round=flr,
+                                                        device=self.device)
+            elif self.defense_technique == "krum-multilayer":
+                pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
+                net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
+                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        net_freq=net_freq,
+                                                        net_avg=self.net_avg,
+                                                        g_user_indices=selected_node_indices,
+                                                        pseudo_avg_net=pseudo_avg_net,
+                                                        round=flr,
+                                                        selected_attackers=selected_attackers,
+                                                        device=self.device)   
+            # logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
+                print("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))             
+                print("Predicted Attackers in FL iteration-{}: {}".format(flr, pred_g_attacker))             
+            
             else:
                 NotImplementedError("Unsupported defense method !")
 
@@ -631,6 +662,18 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             main_task_acc.append(overall_acc)
             raw_task_acc.append(raw_acc)
             backdoor_task_acc.append(backdoor_acc)
+
+            if(wandb_ins):
+                wandb_logging = {'fl_iter': flr, 
+                            'main_task_acc': overall_acc, 
+                            'backdoor_acc': backdoor_acc, 
+                            'raw_task_acc':raw_acc, 
+                            # 'adv_norm_diff': adv_norm_diff, 
+                            'wg_norm': torch.norm(v).item(),
+                            # 'cnt_attackers': cnt_attacker,
+                            }
+                wandb_ins.log({"general": wandb_logging})
+            
 
         df = pd.DataFrame({'fl_iter': fl_iter_list, 
                             'main_task_acc': main_task_acc, 
