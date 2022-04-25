@@ -4,6 +4,7 @@ import json
 import numpy as np
 from numpy import dot
 from numpy.linalg import norm
+import pandas as pd
 
 import torch
 import torch.optim as optim
@@ -15,6 +16,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torchvision import datasets, transforms
 from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib.pyplot as plt
 
 from itertools import product
 import math
@@ -22,8 +24,14 @@ import copy
 import time
 import logging
 import pickle
-import random
+import random as rd
 import csv
+
+from helpers import *
+
+#import PCA
+from sklearn.decomposition import PCA
+
 
 from datasets import MNIST_truncated, EMNIST_truncated, CIFAR10_truncated, CIFAR10_Poisoned, CIFAR10NormalCase_truncated, EMNIST_NormalCase_truncated
 
@@ -381,6 +389,7 @@ def load_poisoned_dataset(args):
         with open("poisoned_dataset_fraction_{}".format(fraction), "rb") as saved_data_file:
             poisoned_dataset = torch.load(saved_data_file)
         num_dps_poisoned_dataset = poisoned_dataset.data.shape[0]
+        print("poisoned_dataset: ", poisoned_dataset.data)
         
         # prepare fashionMNIST dataset
         fashion_mnist_train_dataset = datasets.FashionMNIST('./data', train=True, download=True,
@@ -491,7 +500,31 @@ def load_poisoned_dataset(args):
             # keep a copy of clean data
             clean_trainset = copy.deepcopy(poisoned_trainset)
             ########################################################
-
+            print("clean data target: ", poisoned_trainset.targets)
+            print("clean data target's shape: ", poisoned_trainset.targets.shape)
+            labels_clean_set = poisoned_trainset.targets
+            unique, counts = np.unique(labels_clean_set, return_counts=True)
+            cnt_clean_label = dict(zip(unique, counts))
+            cnt_clean_label["southwest"] = 100
+            print(cnt_clean_label)
+            # df = pd.DataFrame(cnt_clean_label)
+            # print(df)
+            labs= list(cnt_clean_label.keys())
+            labs = list(map(str, labs))
+            cnts = list(cnt_clean_label.values())
+            print("labs: ", labs)
+            print("cnts: ", cnts)
+            fig = plt.figure(figsize = (10, 5))
+            
+            # creating the bar plot
+            plt.bar(labs, cnts, color ='maroon')
+            
+            plt.xlabel("Label distribution")
+            plt.ylabel("No. of sample per label")
+            plt.title("Poison client data's distribution")
+            plt.savefig("distribution_label.png")
+            # plt.show()
+            
 
             poisoned_trainset.data = np.append(poisoned_trainset.data, saved_southwest_dataset_train, axis=0)
             poisoned_trainset.targets = np.append(poisoned_trainset.targets, sampled_targets_array_train, axis=0)
@@ -793,12 +826,19 @@ def load_poisoned_dataset(args):
             targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
             num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
 
+        print("poisoned_train_loader: ", poisoned_train_loader)
+        print("poisoned_train_loader.targets: ", poisoned_train_loader.dataset.targets)
+        # print("appended data target: ", poisoned_train_loader..targets)
+        print("appended data target's shape: ", poisoned_train_loader.dataset.targets.shape)
+        with open("client_data_poison.txt", "w+") as lf:
+            lf.write(poisoned_train_loader.dataset.targets)
+            
     return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
 
 
 def seed_experiment(seed=0):
     # seed = 1234
-    random.seed(seed)
+    rd.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -938,3 +978,37 @@ def get_ed_on_base_net(weight_update, avg_weight, total_cli = 10):
 #         cs = dot(point, base_p)/(norm(point)*norm(base_p))
 #         cs_dis.append(float(cs.flatten()))
 #     return eucl_dis, cs_dis
+
+def get_pca_local_updates(update_list, n_component=2):
+    
+    # performing preprocessing part
+    from sklearn.preprocessing import StandardScaler
+    # sc = StandardScaler()
+    np_update_list = np.asarray(update_list).astype(np.float32)
+    # X_train = sc.fit_transform(np_update_list)
+    pca = PCA(n_components=n_component, svd_solver='full')
+    # print("np_update_list.shape is: ", X_train.shape)
+    # print(X_train[0])
+    # for i in range(10):
+    #     print(np.isnan(X_train[i]).any())
+    #     print(np.isinf(X_train[i]).any())
+    
+    principalComponents = pca.fit_transform(np_update_list)
+    # principalDf = pd.DataFrame(data = principalComponents
+    #          , columns = ['principal component 1', 'principal component 2'])
+    # print(principalComponents)
+    return principalComponents
+
+def get_cluster_med_cs(weight_list, idx_list):
+    client_sim_list = []
+    for idx in idx_list:
+        client_cs = []
+        for idx_2 in idx_list:
+            cs = dot(weight_list[idx], weight_list[idx_2])/(norm(weight_list[idx])*norm(weight_list[idx_2]))
+            client_cs.append(float(cs.flatten()))
+        client_sim = np.average(np.asarray(client_cs)).flatten()
+        client_sim_list.append(client_sim)
+    cluster_med = np.median(np.asarray(client_sim_list))
+    return cluster_med
+            
+            

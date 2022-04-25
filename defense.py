@@ -424,6 +424,101 @@ class CONTRA(Defense):
         for w, p in zip(weights, points):
             weighted_updates += (w * p / tot_weights)
         return weighted_updates
+
+class RFLBAT(Defense):
+    """
+    we implement the robust aggregator at: 
+    https://arxiv.org/abs/2201.03772
+    """
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def exec(self, client_models, net_freq, update_list, num_dps,
+                   maxiter=4, eps=1e-5,
+                   ftol=1e-6, device=torch.device("cuda"), 
+                    *args, **kwargs):
+        from sklearn.cluster import KMeans
+        pca_update_list = get_pca_local_updates(update_list)
+        print(pca_update_list)
+        neighbor_distances = []
+        total_client = len(client_models)
+        for i, g_i in enumerate(pca_update_list):
+            distance = []
+            for j, g_j in enumerate(pca_update_list):
+                if i != j:
+                    g_j = pca_update_list[j]
+                    distance.append(float(np.linalg.norm(g_i-g_j))) # let's change this to pytorch version
+            neighbor_distances.append(distance)     
+        # scores = []
+        neighbor_distances = np.asarray(neighbor_distances) 
+        dissimilarity = np.sum(neighbor_distances, 1)
+        print("dissimilarity mean: ", np.mean(dissimilarity))
+        # print(neighbor_distances[0])
+        print("dissimilarity: ", dissimilarity)
+        # epsilon_1 = 10.0
+        epsilon_1 = np.mean(dissimilarity)
+        selected_client_idxs = np.argwhere(dissimilarity <= epsilon_1).flatten()
+        print("selected_client_idxs: ", selected_client_idxs)
+        # Cluster on the clients which pass the filter 1
+        selected_cli_data = np.asarray(pca_update_list)[selected_client_idxs]
+        # selected_cli_data = np.take(np.asarray(pca_update_list), selected_client_idxs)
+        print("selected_cli_data is: ", selected_cli_data.shape)
+        kmeans = KMeans(n_clusters = 2)
+        pred_labels = kmeans.fit_predict(selected_cli_data)
+        print("pred_labels: ", pred_labels)
+        
+        unique_labels = np.unique(pred_labels)
+        number_of_cluster = 2
+        client_by_cluster = [[] for _ in range(number_of_cluster)]
+        for idx, g_indx in enumerate(selected_client_idxs):
+            label = pred_labels[idx]
+            client_by_cluster[label].append(g_indx)
+            
+        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        
+        med_cluster_list = []
+        for lab in unique_labels:
+            client_by_label_idxs = client_by_cluster[lab]
+            cluster_med = get_cluster_med_cs(vectorize_nets, client_by_label_idxs)
+            med_cluster_list.append(cluster_med)
+        selected_cluster = np.argmin(np.asarray(med_cluster_list)).flatten()
+        print("selected_cluster is: ", selected_cluster)
+        
+        selected_client_idxs_2 = client_by_cluster[selected_cluster[0]]
+        selected_neighbor_distances = []
+        
+        for i in selected_client_idxs_2:
+            distance = []
+            g_i = pca_update_list[i]
+            for j in selected_client_idxs_2:
+                if i != j:
+                    g_j = pca_update_list[j]
+                    distance.append(float(np.linalg.norm(g_i-g_j))) # let's change this to pytorch version
+            selected_neighbor_distances.append(distance)     
+        # scores = []
+        selected_neighbor_distances = np.asarray(selected_neighbor_distances)  
+        print(f"selected_neighbor_distances.shape is: {selected_neighbor_distances.shape}")
+        similarity = np.sum(selected_neighbor_distances, 1)
+        print("similarity 2: ", similarity)
+        epsilon_2 = np.mean(similarity)
+        final_selected_client_idxs = np.argwhere(similarity <= epsilon_2).flatten()
+        print("final_selected_client_idxs is: ", final_selected_client_idxs)
+        selected_num_dps = np.array(num_dps)[final_selected_client_idxs]
+        reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+        logger.info("Num data points: {}".format(num_dps))
+        logger.info("Num selected data points: {}".format(selected_num_dps))
+        vectorize_nets = np.asarray(vectorize_nets)[final_selected_client_idxs]
+        
+        aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
+
+        aggregated_model = client_models[0] # slicing which doesn't really matter
+        
+        
+        load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device)) 
+        neo_net_list = [aggregated_model]
+        neo_net_freq = [1.0]
+        return neo_net_list, neo_net_freq             
+    
     
 class KmeansBased(Defense):
     def __init__(self, num_workers, num_adv, *args, **kwargs):
@@ -582,7 +677,7 @@ class KrMLRFL(Defense):
         
         if self.num_valid == 1:
             i_star = scores.index(min(scores))
-            logger.info("@@@@ The chosen trusted worker is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
+            # logger.info("@@@@ The chosen trusted worker is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
             # aggregated_model = client_models[0] # slicing which doesn't really matter
             # load_model_weight(aggregated_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
             # neo_net_list = [aggregated_model]
@@ -658,7 +753,7 @@ class KrMLRFL(Defense):
         raw_sum = raw_sum/sum(raw_sum)
         raw_sum = np.asarray(raw_sum).flatten()
         # mean_sum = sum(raw_sum)/10
-        pred_att_idxs = (-raw_sum).argsort()[:2].flatten()
+        pred_att_idxs = (-raw_sum).argsort()[:1].flatten()
         print(np.argsort(-raw_sum, axis=-1))
         print("pred_att_idxs: ", pred_att_idxs)
         print("global_pred_attackers_indx: ", [g_user_indices[ind_] for ind_ in pred_att_idxs])
@@ -673,6 +768,8 @@ class KrMLRFL(Defense):
         neo_net_list = []
         neo_net_freq = []
         selected_net_indx = []
+        if (round - 1)%10:
+            pred_attackers_indx = []
         for idx, net in enumerate(client_models):
             if idx not in pred_attackers_indx:
                 neo_net_list.append(net)
@@ -684,7 +781,7 @@ class KrMLRFL(Defense):
 
         logger.info("Num data points: {}".format(num_dps))
         logger.info("Num selected data points: {}".format(selected_num_dps))
-        logger.info("The chosen ones are users: {}, which are global users: {}".format(selected_net_indx, [g_user_indices[ti] for ti in selected_net_indx]))
+        # logger.info("The chosen ones are users: {}, which are global users: {}".format(selected_net_indx, [g_user_indices[ti] for ti in selected_net_indx]))
         
         aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
 
@@ -777,6 +874,85 @@ class KrMLRFL(Defense):
         return weighted_updates
 
 
+class UpperBound(Defense):
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def exec(self, client_models, num_dps, attacker_idxs, g_user_indices, device=torch.device("cuda"), *args, **kwargs):
+        #GET KRUM VECTOR
+        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        neighbor_distances = []
+        for i, g_i in enumerate(vectorize_nets):
+            distance = []
+            for j in range(i+1, len(vectorize_nets)):
+                if i != j:
+                    g_j = vectorize_nets[j]
+                    distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
+            neighbor_distances.append(distance)
+
+        # compute scores
+        # nb_in_score = self.num_workers-self.s-2
+        nb_in_score = 10 - 1 - 2
+        scores = []
+        for i, g_i in enumerate(vectorize_nets):
+            dists = []
+            for j, g_j in enumerate(vectorize_nets):
+                if j == i:
+                    continue
+                if j < i:
+                    dists.append(neighbor_distances[j][i - j - 1])
+                else:
+                    dists.append(neighbor_distances[i][j - i - 1])
+            # alternative to topk in pytorch and tensorflow
+            topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
+            scores.append(sum(np.take(dists, topk_ind)))
+        
+        i_star = scores.index(min(scores))
+        logger.info("@@@@ The chosen one is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
+        flatten_krum_w = vectorize_nets[i_star]
+        
+        # aggregated_model = client_models[0] # slicing which doesn't really matter
+        # load_model_weight(aggregated_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
+        # neo_net_list = [aggregated_model]
+        # logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
+        # neo_net_freq = [1.0]
+        # return neo_net_list, neo_net_freq
+        
+        
+        
+        # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        selected_idxs = [idx for idx in range(len(client_models)) if idx not in attacker_idxs]
+        print("selected_idxs: ", selected_idxs)
+        selected_num_dps = np.array(num_dps)[selected_idxs]
+        reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+        logger.info("Num data points: {}".format(num_dps))
+        logger.info("Num selected data points: {}".format(selected_num_dps))
+        vectorize_nets = np.asarray(vectorize_nets)[selected_idxs]
+        
+        aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
+
+        # REPORT COSINE SIMILARITY
+        cs = dot(aggregated_grad, aggregated_grad)/(norm(aggregated_grad)*norm(aggregated_grad)).flatten()
+        
+        # REPORT EUCLIDEAN DISTANCE
+        point = aggregated_grad.flatten().reshape(-1,1)
+        base_p = aggregated_grad.flatten().reshape(-1,1)
+        ds = point - base_p
+        sum_sq = np.dot(ds.T, ds)
+        eu_dist = float(np.sqrt(sum_sq).flatten())
+        # ed_list.append(float(np.sqrt(sum_sq).flatten()))
+        # client_cs.append(float(cs.flatten()))
+        
+        aggregated_model = client_models[0] # slicing which doesn't really matter
+        load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device)) 
+        neo_net_list = [aggregated_model]
+        neo_net_freq = [1.0]
+        
+        
+        return neo_net_list, neo_net_freq, cs, eu_dist             
+        
+        
+        
 
 
     

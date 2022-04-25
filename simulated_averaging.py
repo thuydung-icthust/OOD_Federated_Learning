@@ -172,7 +172,7 @@ if __name__ == "__main__":
     group_name = f"{args.dataset} {args.attack_method}"
     vanilla_model = copy.deepcopy(net_avg)
     group_name = args.dataset
-    ins_name = f"benchmark-{args.fl_mode}-{args.attack_method}-{args.defense_method}"
+    ins_name = f"idea-{args.fl_mode}-{args.attack_method}-{args.defense_method}"
     
     wandb_ins = wandb.init(project="Backdoor attack in FL",
                entity="aiotlab",

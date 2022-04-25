@@ -343,6 +343,8 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
         self.prox_attack = arguments['prox_attack']
         self.attack_case = arguments['attack_case']
         self.stddev = arguments['stddev']
+        self.flatten_net_avg = None
+        
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -366,6 +368,8 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
 
         if arguments["defense_technique"] == "no-defense":
             self._defender = None
+        # if arguments["defense_technique"] == "upper-bound":
+        #     self._defender = None
         elif arguments["defense_technique"] == "norm-clipping" or arguments["defense_technique"] == "norm-clipping-adaptive":
             self._defender = WeightDiffClippingDefense(norm_bound=arguments['norm_bound'])
         elif arguments["defense_technique"] == "weak-dp":
@@ -379,6 +383,14 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             self._defender = RFA()
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased()
+        elif arguments["defense_technique"] == "krum-multilayer":
+            self._defender = KrMLRFL(num_workers=self.part_nets_per_round, num_adv=1, num_valid=1)
+        elif arguments["defense_technique"] == "rflbat":
+            self._defender = RFLBAT()
+        elif arguments["defense_technique"] == "upper-bound":
+            print("upperbound here")
+            self._defender = UpperBound()
+            print(self._defender)
         else:
             NotImplementedError("Unsupported defense method !")
 
@@ -390,6 +402,8 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
         fl_iter_list = []
         adv_norm_diff_list = []
         wg_norm_list = []
+        self.flatten_net_avg = flatten_model(self.net_avg)
+        
         # let's conduct multi-round training
         for flr in range(1, self.fl_round+1):
             logger.info("##### attack fl rounds: {}".format(self.attacking_fl_rounds))
@@ -398,8 +412,11 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             if self.defense_technique == "norm-clipping-adaptive":
                 # experimental
                 norm_diff_collector = []
-
+            attacker_idxs = []
             if flr in self.attacking_fl_rounds:
+                
+                attacker_idxs.append(0)
+                
                 # randomly select participating clients
                 # in this current version, we sample `part_nets_per_round-1` per FL round since we assume attacker will always participates
                 selected_node_indices = np.random.choice(self.num_nets, size=self.part_nets_per_round-1, replace=False)
@@ -605,6 +622,41 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
                                                         device=self.device)
+            elif self.defense_technique == "krum-multilayer":
+                pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
+                net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
+                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        net_freq=net_freq,
+                                                        net_avg=self.net_avg,
+                                                        g_user_indices=g_user_indices,
+                                                        pseudo_avg_net=pseudo_avg_net,
+                                                        round=flr,
+                                                        selected_attackers=[0],
+                                                        device=self.device)   
+            # logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
+                print("Selected Attackers in FL iteration-{}: {}".format(flr, 0))             
+                print("Predicted Attackers in FL iteration-{}: {}".format(flr, pred_g_attacker))             
+            
+            elif self.defense_technique == "rflbat":
+                
+                flatten_local_models = [flatten_model(net_list[net_idx]).cpu().data.numpy() for net_idx in range(len(net_list))]
+                updates = np.asarray(flatten_local_models) - self.flatten_net_avg.cpu().data.numpy()
+                # print("updates.shape: ", updates.shape)
+                # print("updates: ", updates)
+                net_list, net_freq = self._defender.exec(client_models=net_list,
+                                                         net_freq=net_freq,
+                                                         update_list=updates,
+                                                         num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                         device=self.device
+                                                         )
+            
+            elif self.defense_technique == "upper-bound":
+                net_list, net_freq, cs, eu_dist  = self._defender.exec(client_models=net_list,
+                                            num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                            attacker_idxs=attacker_idxs,
+                                            g_user_indices=g_user_indices,
+                                            device=self.device
+                                            )
             else:
                 NotImplementedError("Unsupported defense method !")
 
@@ -615,6 +667,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                 noise_adder = AddNoise(stddev=self.stddev)
                 noise_adder.exec(client_model=self.net_avg,
                                                 device=self.device)
+            self.flatten_net_avg = flatten_model(self.net_avg)
 
             v = torch.nn.utils.parameters_to_vector(self.net_avg.parameters())
             logger.info("############ Averaged Model : Norm {}".format(torch.norm(v)))
@@ -637,6 +690,8 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                             'raw_task_acc':raw_acc, 
                             # 'adv_norm_diff': adv_norm_diff, 
                             'wg_norm': wg_norm_list[-1],
+                            'cs btw krum': cs,
+                            'eu_dist btw krum': eu_dist,
                             # 'cnt_attackers': cnt_attacker,
                             }
                 wandb_ins.log({"general": wandb_logging})
