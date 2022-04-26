@@ -981,6 +981,7 @@ def get_distance_on_avg_net(weight_list, avg_weight, weight_update, total_cli = 
 def get_cs_on_base_net(weight_update, avg_weight, total_cli = 10):
     cs_list = []
     print("weight_update.shape: ", weight_update.shape)
+    total_cli = len(weight_update)
     for i in range(total_cli):
         point = weight_update[i].flatten()
         # print("point: ", point)

@@ -1876,7 +1876,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                     "term2": term2, 
                     "term3": term3,
                 }                
-                wandb_ins.log({"general/generla": wandb_logging, "ddpg/insight": ddpg_logging})
+                wandb_ins.log({"general": wandb_logging, "ddpg/insight": ddpg_logging})
 
         df = pd.DataFrame(
             {
