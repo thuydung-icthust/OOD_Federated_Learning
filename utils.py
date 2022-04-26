@@ -28,6 +28,7 @@ import random as rd
 import csv
 
 from helpers import *
+from defense import vectorize_net
 
 #import PCA
 from sklearn.decomposition import PCA
@@ -830,8 +831,8 @@ def load_poisoned_dataset(args):
         print("poisoned_train_loader.targets: ", poisoned_train_loader.dataset.targets)
         # print("appended data target: ", poisoned_train_loader..targets)
         print("appended data target's shape: ", poisoned_train_loader.dataset.targets.shape)
-        with open("client_data_poison.txt", "w+") as lf:
-            lf.write(poisoned_train_loader.dataset.targets)
+        # with open("client_data_poison.txt", "w+") as lf:
+        #     lf.write(poisoned_train_loader.dataset.targets)
             
     return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
 
@@ -925,6 +926,40 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
 
     return bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight
 
+def extract_classifier_layer_new(net_list, prev_net):
+    bias_list = []
+    weight_list = []
+    weight_update = []
+    # avg_bias = None
+    # avg_weight = None
+    prev_avg_bias = None
+    prev_avg_weight = None
+    # for idx, param in enumerate(global_avg_net.classifier.parameters()):
+    #     if idx:
+    #         avg_bias = param.data.cpu().numpy()
+    #     else:
+    #         avg_weight = param.data.cpu().numpy()
+
+    for idx, param in enumerate(prev_net.classifier.parameters()):
+        if idx:
+            prev_avg_bias = param.data.cpu().numpy()
+        else:
+            prev_avg_weight = param.data.cpu().numpy()
+    # glob_update = avg_weight - prev_avg_weight
+    for net in net_list:
+        bias = None
+        weight = None
+        for idx, param in enumerate(net.classifier.parameters()):
+            if idx:
+                bias = param.data.cpu().numpy()
+            else:
+                weight = param.data.cpu().numpy()
+        bias_list.append(bias)
+        weight_list.append(weight)
+        weight_update.append(weight-prev_avg_weight)
+
+    return bias_list, weight_list, weight_update, prev_avg_weight, prev_avg_bias 
+
 def get_distance_on_avg_net(weight_list, avg_weight, weight_update, total_cli = 10):
     eucl_dis = []
     cs_dis = []
@@ -945,6 +980,7 @@ def get_distance_on_avg_net(weight_list, avg_weight, weight_update, total_cli = 
 
 def get_cs_on_base_net(weight_update, avg_weight, total_cli = 10):
     cs_list = []
+    print("weight_update.shape: ", weight_update.shape)
     for i in range(total_cli):
         point = weight_update[i].flatten()
         # print("point: ", point)
@@ -987,11 +1023,6 @@ def get_pca_local_updates(update_list, n_component=2):
     np_update_list = np.asarray(update_list).astype(np.float32)
     # X_train = sc.fit_transform(np_update_list)
     pca = PCA(n_components=n_component, svd_solver='full')
-    # print("np_update_list.shape is: ", X_train.shape)
-    # print(X_train[0])
-    # for i in range(10):
-    #     print(np.isnan(X_train[i]).any())
-    #     print(np.isinf(X_train[i]).any())
     
     principalComponents = pca.fit_transform(np_update_list)
     # principalDf = pd.DataFrame(data = principalComponents
@@ -1011,4 +1042,77 @@ def get_cluster_med_cs(weight_list, idx_list):
     cluster_med = np.median(np.asarray(client_sim_list))
     return cluster_med
             
-            
+def get_krum_vectors(client_models, num_dps, num_workers, num_adv, num_valid = 1):
+    vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+    
+    # compute scores
+    nb_in_score = num_workers-num_adv-2
+    scores = []
+    neighbor_distances = []
+    for i, g_i in enumerate(vectorize_nets):
+        dists = []
+        for j, g_j in enumerate(vectorize_nets):
+            if j == i:
+                continue
+            if j < i:
+                dists.append(neighbor_distances[j][i - j - 1])
+            else:
+                dists.append(neighbor_distances[i][j - i - 1])
+        # alternative to topk in pytorch and tensorflow
+        topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
+        scores.append(sum(np.take(dists, topk_ind)))
+    
+    if num_valid == 1:
+        i_star = scores.index(min(scores))
+        # logger.info("@@@@ The chosen one is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
+        # aggregated_model = client_models[0] # slicing which doesn't really matter
+        # load_model_weight(aggregated_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
+        # neo_net_list = [aggregated_model]
+        # logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
+        # neo_net_freq = [1.0]
+        return vectorize_nets[i_star]
+    else:
+        topk_ind = np.argpartition(scores, nb_in_score+2)[:nb_in_score+2]
+        
+        # we reconstruct the weighted averaging here:
+        selected_num_dps = np.array(num_dps)[topk_ind]
+        reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+
+        logger.info("Num data points: {}".format(num_dps))
+        logger.info("Num selected data points: {}".format(selected_num_dps))
+        logger.info("The chosen ones are users: {}, which are global users: {}".format(topk_ind, [g_user_indices[ti] for ti in topk_ind]))
+        #aggregated_grad = np.mean(np.array(vectorize_nets)[topk_ind, :], axis=0)
+        aggregated_grad = np.average(np.array(vectorize_nets)[topk_ind, :], weights=reconstructed_freq, axis=0).astype(np.float32)
+
+        # aggregated_model = client_models[0] # slicing which doesn't really matter
+        # load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
+        # neo_net_list = [aggregated_model]
+        #logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
+        # neo_net_freq = [1.0]
+        return aggregated_grad
+
+
+def get_ddqg_reward(aggregated_w, selected_client_ws, krum_w, prev_w, delta_acc, flr):
+    # concatenated_w_list = np.hstack(np.asarray(aggregated_w), np.asarray(selected_client_ws))
+    print("selected_client_ws.shape: ", selected_client_ws.shape)
+    concatenated_w_list = np.vstack((selected_client_ws, aggregated_w))
+    print(f"concatenated_w_list.shape is: {concatenated_w_list.shape}")
+    cs_list = get_cs_on_base_net(concatenated_w_list, krum_w)
+    norm_cs_list = min_max_scale(cs_list)
+    term1 = norm_cs_list[-1]    # the closeness degree of aggregated client compared to other predicted benign vectors.
+    norm_cur_w = norm(aggregated_w)
+    prev_w = prev_w.cpu().data.numpy()
+    norm_prev_w = norm(prev_w)
+    print("norm_cur_w: ",norm_cur_w)
+    print("norm_prev_w: ", norm_prev_w)
+    decrease_percent = (norm_cur_w - norm_prev_w)/norm_prev_w*100.0
+    print("decrease_percent is: ", decrease_percent)
+    term2 = math.log10(-math.log10(decrease_percent)) if decrease_percent > 0 else 0.0
+    # The stable of the global model => which helps to improve overall accuracy
+    term3 = 64**(math.tanh(delta_acc))
+    if flr >=3:
+        rw = 0.4*term1 + 0.3*term2 + 0.3*term3 if flr > 50 else 0.6*term1 + 0.4*term3
+    else:
+        rw = term1
+    return rw, term1, term2, term3
+                

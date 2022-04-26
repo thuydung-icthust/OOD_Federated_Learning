@@ -5,6 +5,8 @@ from scipy.special import logit, expit
 from geometric_median import geometric_median
 import hdbscan
 
+from ddpg_agent import *
+
 def vectorize_net(net):
     return torch.cat([p.view(-1) for p in net.parameters()])
 
@@ -358,9 +360,6 @@ class CONTRA(Defense):
 
         alignment_levels = pairwise_cs.copy()
         lr_list = [1.0 for _ in range(total_clients)]
-        # for net_idx, global_node_id in enumerate(selected_node_indices):
-        #     lr_list[global_node_id] = 1.0
-        # print("avg_k_top_cs: ", avg_k_top_cs)
         for net_idx in selected_node_indices:
             cs_m_n = []
             for client_p in selected_node_indices:
@@ -393,7 +392,7 @@ class CONTRA(Defense):
                 lr_list[i] = logit(0.99)+0.5
             else:
                 lr_list[i] = logit(lr_list[i]) + 0.5
-        # lr_list = logit(lr_list/(1.0-lr_list)) + 0.5 
+
         print("lr_list: ", lr_list)
         weights = lr_list.copy()
         print("weights: ", weights)
@@ -837,7 +836,7 @@ class KrMLRFL(Defense):
         
         hb_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.0, approx_min_span_tree=True,
                                 gen_min_span_tree=False, leaf_size=40,
-                                metric='euclidean', min_cluster_size=2, min_samples=None, p=None)
+                                metric='euclidean', min_samples=None, p=None)
         hb_clusterer.fit(stack_dis)
         print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
         return temp_score

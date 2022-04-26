@@ -177,7 +177,7 @@ if __name__ == "__main__":
     wandb_ins = wandb.init(project="Backdoor attack in FL",
                entity="aiotlab",
                name=ins_name,
-               group=group_name,
+               group="CIFAR-10",
                config={
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
             "vanilla_model":vanilla_model,
