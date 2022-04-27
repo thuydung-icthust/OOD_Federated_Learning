@@ -992,6 +992,7 @@ def get_cs_on_base_net(weight_update, avg_weight, total_cli = 10):
 
 def get_ed_on_base_net(weight_update, avg_weight, total_cli = 10):
     ed_list = []
+    total_cli = len(weight_update)
     for i in range(total_cli):
         point = weight_update[i].flatten().reshape(-1,1)
         base_p = avg_weight.flatten().reshape(-1,1)
@@ -1092,27 +1093,37 @@ def get_krum_vectors(client_models, num_dps, num_workers, num_adv, num_valid = 1
         # neo_net_freq = [1.0]
         return aggregated_grad
 
+def sigmoid(x):
+    return 1 / (1 + math.exp(-x))
 
 def get_ddqg_reward(aggregated_w, selected_client_ws, krum_w, prev_w, delta_acc, flr):
     # concatenated_w_list = np.hstack(np.asarray(aggregated_w), np.asarray(selected_client_ws))
     print("selected_client_ws.shape: ", selected_client_ws.shape)
     concatenated_w_list = np.vstack((selected_client_ws, aggregated_w))
     print(f"concatenated_w_list.shape is: {concatenated_w_list.shape}")
-    cs_list = get_cs_on_base_net(concatenated_w_list, krum_w)
-    norm_cs_list = min_max_scale(cs_list)
+    cs_list = get_ed_on_base_net(concatenated_w_list, krum_w)
+    norm_cs_list = 1.0 - min_max_scale(cs_list)
+    print(norm_cs_list)
     term1 = norm_cs_list[-1]    # the closeness degree of aggregated client compared to other predicted benign vectors.
     norm_cur_w = norm(aggregated_w)
     prev_w = prev_w.cpu().data.numpy()
-    norm_prev_w = norm(prev_w)
+    # norm_prev_w = norm(prev_w)
+    norm_prev_w = norm(krum_w)
+    
     print("norm_cur_w: ",norm_cur_w)
     print("norm_prev_w: ", norm_prev_w)
     decrease_percent = (norm_cur_w - norm_prev_w)/norm_prev_w*100.0
     print("decrease_percent is: ", decrease_percent)
-    term2 = math.log10(-math.log10(decrease_percent)) if decrease_percent > 0 else 0.0
+    # term2 = math.log10(-math.log10(decrease_percent)) if decrease_percent > 0 else -1.0
+    # term2 = math.log2(1.0/(norm_cur_w/norm_prev_w))
+    term2 = np.tanh(decrease_percent).flatten()
+    print("term2: ",term2)
     # The stable of the global model => which helps to improve overall accuracy
     term3 = 64**(math.tanh(delta_acc))
+    print("term3: ",term3)
+    
     if flr >=3:
-        rw = 0.4*term1 + 0.3*term2 + 0.3*term3 if flr > 50 else 0.6*term1 + 0.4*term3
+        rw = 0.3*term1 + 0.5*term2 + 0.2*term3 if flr > 30 else 0.5*term1 + 0.5*term3
     else:
         rw = term1
     return rw, term1, term2, term3

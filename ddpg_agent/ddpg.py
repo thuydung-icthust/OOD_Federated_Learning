@@ -27,7 +27,7 @@ class DDPG_Agent(nn.Module):
         replay_buffer_size=1000000,
         max_steps=16*50,
         max_frames=12000,
-        batch_size=4,
+        batch_size=2,
         beta=0.45,
         log_dir="./log/epochs",
         gamma = 0.99,
@@ -105,24 +105,28 @@ class DDPG_Agent(nn.Module):
             # action = torch.DoubleTensor(action).squeeze().cuda()
             # reward = torch.DoubleTensor(reward).cuda()
             # done = torch.DoubleTensor(np.float32(done)).cuda()
-
+            # print("hihihi")
             state = torch.DoubleTensor(state).squeeze().to(self.device)
             next_state = torch.DoubleTensor(
                 next_state).squeeze().to(self.device)
             action = torch.DoubleTensor(action).squeeze().to(self.device)
-            reward = torch.DoubleTensor(reward).to(self.device)
+            reward = torch.DoubleTensor(reward).squeeze().to(self.device)
             done = torch.DoubleTensor(np.float32(done)).to(self.device)
-
+            # print("state: ", state)
+            # print("next_state: ", next_state)
             policy_loss = self.value_net(state, self.policy_net(state), self.batch_size)
             policy_loss = -policy_loss.mean()
             next_action = self.target_policy_net(next_state)
             target_value = self.target_value_net(next_state, next_action.detach(), self.batch_size)
-
-            expected_value = reward + (1.0 - done) * self.gamma * target_value.squeeze()
+            # print("target_value: ", target_value)
+            # print("reward: ", reward)
+            expected_value = reward + self.gamma * target_value.squeeze()
             expected_value = torch.clamp(expected_value, min_value, max_value)
+            # print("expected_value: ", expected_value)
+
 
             value = self.value_net(state, action, self.batch_size).squeeze()
-
+            # print("value: ", value)
             value_loss = self.value_criterion(value, expected_value)
 
             self.policy_optimizer.zero_grad()
