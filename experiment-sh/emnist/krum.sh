@@ -19,7 +19,7 @@ python simulated_averaging.py \
 --eps 2 \
 --fraction 0.15 \
 --adv_lr 0.02 \
---prox_attack False \
+--prox_attack False \xw
 --poison_type ardis \
 --norm_bound 2 \
 --attacker_percent 0.25 \
