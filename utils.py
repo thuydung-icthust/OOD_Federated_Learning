@@ -830,8 +830,8 @@ def load_poisoned_dataset(args):
         print("poisoned_train_loader.targets: ", poisoned_train_loader.dataset.targets)
         # print("appended data target: ", poisoned_train_loader..targets)
         print("appended data target's shape: ", poisoned_train_loader.dataset.targets.shape)
-        with open("client_data_poison.txt", "w+") as lf:
-            lf.write(poisoned_train_loader.dataset.targets)
+        # with open("client_data_poison.txt", "w+") as lf:
+        #     lf.write(poisoned_train_loader.dataset.targets)
             
     return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
 

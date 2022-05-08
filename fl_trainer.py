@@ -125,13 +125,16 @@ def estimate_wg(model, device, train_loader, optimizer, epoch, log_interval, cri
 
 
 def train(model, device, train_loader, optimizer, epoch, log_interval, criterion, pgd_attack=False, eps=5e-4, model_original=None,
-        proj="l_2", project_frequency=1, adv_optimizer=None, prox_attack=False, wg_hat=None):
+        proj="l_2", project_frequency=1, adv_optimizer=None, prox_attack=False, wg_hat=None, global_user_idx=None):
     """
         train function for both honest nodes and adversary.
         NOTE: this trains only for one epoch
     """
     model.train()
     # get learning rate
+    if global_user_idx:
+        print(f"Current investigating attacker: {global_user_idx}")
+        print(f"Labels index: {train_loader.dataset.targets}")
     for param_group in optimizer.param_groups:
         eta = param_group['lr']
 
@@ -928,7 +931,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                         if self.defense_technique in ('krum', 'multi-krum'):
                             train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
                                     pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
-                                    prox_attack=self.prox_attack, wg_hat=wg_hat)
+                                    prox_attack=self.prox_attack, wg_hat=wg_hat, global_user_idx=global_user_idx)
                         elif self.defense_technique == 'kmeans-bases':
                             if flr < 50:
                                 train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
