@@ -177,9 +177,9 @@ if __name__ == "__main__":
                group=group_name,
                config={
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
-            "vanilla_model":vanilla_model,
-            "net_avg":net_avg,
-            "net_dataidx_map":net_dataidx_map,
+            # "vanilla_model":vanilla_model,
+            # "net_avg":net_avg,
+            # "net_dataidx_map":net_dataidx_map,
             "num_nets":args.num_nets,
             "dataset":args.dataset,
             "model":args.model,
