@@ -87,8 +87,18 @@ def record_net_data_stats(y_train, net_dataidx_map):
     for net_i, dataidx in net_dataidx_map.items():
         unq, unq_cnt = np.unique(y_train[dataidx], return_counts=True)
         tmp = {unq[i]: unq_cnt[i] for i in range(len(unq))}
+        for i in range(10):
+            tmp[i] = tmp.get(i, 0)
         net_cls_counts[net_i] = tmp
     logging.debug('Data statistics: %s' % str(net_cls_counts))
+
+    fields = [i for i in range(10)]
+    fields.insert(0, 'id')
+    w = csv.DictWriter(open('data_distribution.csv', 'w'), fields)
+    for key,val in sorted(net_cls_counts.items()):
+        row = {'id': key}
+        row.update(val)
+        w.writerow(row)
     return net_cls_counts
 
 
@@ -245,7 +255,7 @@ def partition_data(dataset, datadir, partition, n_nets, alpha, args):
             #logger.info("$$$$$$$$$$$$$$ recovered black box indices: {}".format(black_box_indices))
             #exit()
     traindata_cls_counts = record_net_data_stats(y_train, net_dataidx_map)
-
+    print(traindata_cls_counts)
     return net_dataidx_map
 
 
