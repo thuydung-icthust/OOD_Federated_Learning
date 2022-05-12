@@ -296,8 +296,8 @@ def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task"
                 final_acc = 100 * class_correct[1] / class_total[1]
         
         elif dataset == "cifar10":
-            logger.info('#### Targetted Accuracy of %5s : %.2f %%' % (classes[target_class], 100 * class_correct[target_class] / class_total[target_class]))
-            final_acc = 100 * class_correct[target_class] / class_total[target_class]
+            logger.info('#### Targetted Accuracy of %5s : %.2f %%' % (classes[target_class], 100 * class_correct[target_class] / (class_total[target_class] + 1e-6)))
+            final_acc = 100 * class_correct[target_class] / (class_total[target_class] + 1e-6)
     return final_acc, task_acc
 
 class FederatedLearningTrainer:
