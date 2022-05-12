@@ -7,10 +7,10 @@ python simulated_averaging.py \
 --local_train_period 2 \
 --adversarial_local_training_period 2 \
 --dataset emnist \
---model lenet \
+--model simple_model \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method multi-krum \
+--defense_method no-defense \
 --attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \

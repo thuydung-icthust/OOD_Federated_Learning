@@ -67,6 +67,22 @@ class Net(nn.Module):
         #output = F.log_softmax(x, dim=1)
         return x
 
+class SimpleNet(nn.Module):
+    def __init__(self, num_classes):
+        super(SimpleNet, self).__init__()
+        self.fc1 = nn.Linear(3072, 1024)
+        self.fc2 = nn.Linear(1024, 128)
+        self.fc3 = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        x = torch.flatten(x,1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+        x = F.relu(x)
+        x = self.fc3(x)
+        #output = F.log_softmax(x, dim=1)
+        return x
 
 class AddGaussianNoise(object):
     def __init__(self, mean=0., std=1.):
@@ -255,7 +271,7 @@ def partition_data(dataset, datadir, partition, n_nets, alpha, args):
             #logger.info("$$$$$$$$$$$$$$ recovered black box indices: {}".format(black_box_indices))
             #exit()
     traindata_cls_counts = record_net_data_stats(y_train, net_dataidx_map)
-    print(traindata_cls_counts)
+    # print(traindata_cls_counts)
     return net_dataidx_map
 
 
@@ -826,17 +842,25 @@ def seed_experiment(seed=0):
 def get_logging_items(net_list, additional_net, selected_node_indices, avg_net_prev, avg_net, attackers_idxs, fl_round):
     logging_list = []
     recorded_w_list = []
-    recorded_w_list.append(vectorize_net(additional_net))
-    
+    print(f'[DUY] net_list_len: {len(net_list)}')
+    recorded_w_list.append(additional_net.state_dict())
     for cm in net_list:
-        recorded_w_list.append(vectorize_net(cm))    
-    
-    for i,param in enumerate(additional_net.classifier.parameters()):
-        if i == 0:
-            with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
-                write = csv.writer(w_f)
-                write.writerow(param.data.cpu().numpy())
-    additional_item = [fl_round, 0, -3, list(additional_net.classifier.parameters())[1].data.cpu().numpy()]
+        recorded_w_list.append(cm.state_dict())
+    recorded_w_list.append(avg_net_prev.state_dict())
+    recorded_w_list.append(avg_net.state_dict())
+
+    ids = [-3, *selected_node_indices, -2, -1]
+
+    if not os.path.exists('logging/eps10'):
+        os.makedirs('logging/eps10')
+    for i, idx in enumerate(ids):
+        torch.save(recorded_w_list[i], open(f'logging/eps10/{idx}_net.pth', 'wb'))
+    # for i,param in enumerate(additional_net.classifier.parameters()):
+    #     if i == 0:
+    #         with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
+    #             write = csv.writer(w_f)
+    #             write.writerow(param.data.cpu().numpy())
+    additional_item = [fl_round, 0, -3, list(additional_net.fc3.parameters())[1].data.cpu().numpy()]
     logging_list.append(additional_item)
     for net_idx, global_user_idx in enumerate(selected_node_indices):
         #round id weights bias is-attacker
@@ -845,7 +869,7 @@ def get_logging_items(net_list, additional_net, selected_node_indices, avg_net_p
         # bias = list(net.classifier.parameters())[0].data.cpu().numpy()
         # weights = list(net.classifier.parameters())[-1].data.cpu().numpy()
 
-        for idx, param in enumerate(net.classifier.parameters()):
+        for idx, param in enumerate(net.fc3.parameters()):
             if idx:
                 bias = param.data.cpu().numpy()
             else:
@@ -853,36 +877,35 @@ def get_logging_items(net_list, additional_net, selected_node_indices, avg_net_p
         # with open('logging/bias_benchmark.csv', 'a+') as bias_f:
         #     write = csv.writer(bias_f)
         #     write.writerow([bias])
-        with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
-            write = csv.writer(w_f)
-            write.writerow(weights)        
+        # with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
+        #     write = csv.writer(w_f)
+        #     write.writerow(weights)        
             # write.writerow([weight])
         if global_user_idx in attackers_idxs:
             is_attacker = 1
         item = [fl_round, is_attacker, global_user_idx, bias]
         logging_list.append(item)
     
-    prev_avg_item = [fl_round, 0, -2, list(avg_net_prev.classifier.parameters())[1].data.cpu().numpy()] if avg_net_prev else [fl_round, 0, -2, None]
-    avg_item = [fl_round, 0, -1, list(avg_net.classifier.parameters())[1].data.cpu().numpy()]
+    prev_avg_item = [fl_round, 0, -2, list(avg_net_prev.fc3.parameters())[1].data.cpu().numpy()] if avg_net_prev else [fl_round, 0, -2, None]
+    avg_item = [fl_round, 0, -1, list(avg_net.fc3.parameters())[1].data.cpu().numpy()]
     
-    recorded_w_list.append(vectorize_net(avg_net_prev))
-    recorded_w_list.append(vectorize_net(avg_net))
+    
 
     # with open('logging/flatten_w_benchmark.csv', 'a+') as w_f:
     #     write = csv.writer(w_f)
     #     for item_w in recorded_w_list:
     #         write.writerow(item_w)    
                 
-    for i,param in enumerate(avg_net_prev.classifier.parameters()):
-        if i == 0:
-            with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
-                write = csv.writer(w_f)
-                write.writerow(param.data.cpu().numpy())    
-    for i,param in enumerate(avg_net.classifier.parameters()):
-        if i == 0:
-            with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
-                write = csv.writer(w_f)
-                write.writerow(param.data.cpu().numpy())        
+    # for i,param in enumerate(avg_net_prev.classifier.parameters()):
+    #     if i == 0:
+    #         with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
+    #             write = csv.writer(w_f)
+    #             write.writerow(param.data.cpu().numpy())    
+    # for i,param in enumerate(avg_net.classifier.parameters()):
+    #     if i == 0:
+    #         with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
+    #             write = csv.writer(w_f)
+    #             write.writerow(param.data.cpu().numpy())        
     logging_list.append(prev_avg_item)
     logging_list.append(avg_item)
     return logging_list

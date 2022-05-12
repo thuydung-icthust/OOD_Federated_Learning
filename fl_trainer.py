@@ -91,6 +91,8 @@ def fed_avg_aggregator(net_list, net_freq, device, model="lenet"):
         net_avg = Net(num_classes=10).to(device)
     elif model in ("vgg9", "vgg11", "vgg13", "vgg16"):
         net_avg = get_vgg_model(model).to(device)
+    else:
+        net_avg = SimpleNet(num_classes=10).to(device)
     whole_aggregator = []
     
     for p_index, p in enumerate(net_list[0].parameters()):
@@ -922,16 +924,16 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             
             
             # ADDITIONAL TRAINING FOR AN INVESTIGATING CLIENT (Without D_edge data)
+            custom_net = copy.deepcopy(self.net_avg)
             custom_data_loader = self.clean_train_loader
             custom_criterion = nn.CrossEntropyLoss()
-            custom_optimizer = optim.SGD(net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            custom_adv_optimizer = optim.SGD(net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
+            custom_optimizer = optim.SGD(custom_net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
+            custom_adv_optimizer = optim.SGD(custom_net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
             custom_prox_optimizer = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
-            custom_net = copy.deepcopy(self.net_avg)
             for param_group in custom_optimizer.param_groups:
                 logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
             for e_ in range(1, self.local_training_period+1):
-                train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=self.criterion)        
+                train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=custom_criterion)        
                
             
             for net_idx, global_client_indx in enumerate(selected_node_indices):
@@ -1095,7 +1097,6 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         #                     'raw_task_acc':raw_task_acc, 
         #                     'adv_norm_diff': adv_norm_diff_list, 
         #                     'wg_norm': wg_norm_list,
-
         #                     }
         logger.info("Wrote accuracy results to: {}".format(results_filename))
         # if(wandb_ins):

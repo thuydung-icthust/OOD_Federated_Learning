@@ -151,8 +151,10 @@ if __name__ == "__main__":
             #with open("./checkpoint/trained_checkpoint_vanilla.pt", "rb") as ckpt_file:
             with open("./checkpoint/Cifar10_{}_10epoch.pt".format(args.model.upper()), "rb") as ckpt_file:
                 ckpt_state_dict = torch.load(ckpt_file, map_location=device)
-        net_avg.load_state_dict(ckpt_state_dict)
-        logger.info("Loading checkpoint file successfully ...")
+        elif args.model == "simple_model":
+            net_avg = SimpleNet(num_classes=10).to(device)
+        # net_avg.load_state_dict(ckpt_state_dict)
+        # logger.info("Loading checkpoint file successfully ...")
         # print(net_avg.classifier)
         # for param in net_avg.classifier.parameters():
         #     print(param.data)
