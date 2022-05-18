@@ -2,8 +2,11 @@ import torch
 from utils import *
 from scipy.special import logit, expit
 
+from sklearn.preprocessing import normalize
+from sklearn.preprocessing import MinMaxScaler
 from geometric_median import geometric_median
 import hdbscan
+
 
 def vectorize_net(net):
     return torch.cat([p.view(-1) for p in net.parameters()])
@@ -25,6 +28,75 @@ def load_model_weight_diff(net, weight_diff, global_weight):
         p.data =  weight_diff[index_bias:index_bias+p.numel()].view(p.size()) + listed_global_weight[p_index]
         index_bias += p.numel()
 
+def avg_by_class(vectorize_nets, aggregation_w, attackers_idxs, raw_class = 0, target_class = 9):
+    """Calculate the aggregated model by dismiss the poisoning weight of predicted attackers
+
+    Args:
+        vectorize_nets (list of nparray): list of all flatten local weights
+        aggregation_w (list): array of aggregation weight, ratio with numbers of training data
+        raw_class (int, optional): _description_. Defaults to 0.
+        target_class (int, optional): _description_. Defaults to 9.
+        attackers_idxs (list): list contain round idxs of all attackers
+
+    Raises:
+        NotImplementedError: _description_
+
+    Returns:
+        nparray: flatten weight of aggregation model
+    """
+    # print(f"total shape of a flatten w is: {vectorize_nets[0].shape}")
+    total_cli = len(vectorize_nets)
+    np_vectorize_nets = np.asarray(vectorize_nets)
+    # print(np_vectorize_nets.shape)
+    # print(f"total_cli is: {total_cli}")
+    # print(f"aggregation_w is: {len(aggregation_w)}")
+    last_layer_w_cnt = 5130 #last 10 element is the bias
+    last_layer_b_cnt = 10
+    start_idx = 512*target_class
+    end_idx = 512*(target_class+1)
+    
+    start_i, end_i = -(last_layer_w_cnt-start_idx), -(last_layer_w_cnt-end_idx)
+    start_idx_2 = 512*raw_class
+    end_idx_2 = 512*(raw_class+1)
+    start_i_2, end_i_2 = -(last_layer_w_cnt-start_idx_2), -(last_layer_w_cnt-end_idx_2)
+    first_avg_w = np.average(vectorize_nets, weights=aggregation_w, axis=0).astype(np.float32)
+    normal_cli_idxs = [i for i in range(total_cli) if i not in attackers_idxs]
+    print(f"before starting, first_avg_w is {first_avg_w[-last_layer_w_cnt: -(last_layer_w_cnt+512)]}")
+    np_vectorize_nets = np.asarray(vectorize_nets)
+    # print(f"np_vectorize_nets.shape is: {np_vectorize_nets.shape}")
+    # print(np_vectorize_nets[:,start_idx:end_idx].shape)
+    last_layer_w = np_vectorize_nets[:, -last_layer_w_cnt:]
+    normal_cli_w = last_layer_w[:,start_idx:end_idx][normal_cli_idxs]
+    # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    np_aggr_w = np.asarray(aggregation_w)
+    agg_last_layer_w = np.average(normal_cli_w, weights=np_aggr_w[normal_cli_idxs], axis = 0)
+    
+    last_layer_b_target = np_vectorize_nets[:, -(last_layer_b_cnt-target_class)]
+    normal_cli_b = last_layer_b_target[normal_cli_idxs]
+    # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    np_aggr_b = np.asarray(aggregation_w)
+    last_layer_b = np.average(normal_cli_b, weights=np_aggr_b[normal_cli_idxs], axis = 0)
+    
+    first_avg_w[start_i:end_i] = agg_last_layer_w
+    first_avg_w[-(last_layer_b_cnt-target_class)] = last_layer_b.flatten()
+    
+    # FOR RAW CLASS , e.g. class 0
+    # last_layer_w = np_vectorize_nets[:, -last_layer_w_cnt:]
+    normal_cli_w_2 = last_layer_w[:,start_idx_2:end_idx_2][normal_cli_idxs]
+    # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    # np_aggr_w = np.asarray(aggregation_w)
+    last_layer_w_2 = np.average(normal_cli_w_2, weights=np_aggr_w[normal_cli_idxs], axis = 0)
+    
+    last_layer_b_raw = np_vectorize_nets[:, -(last_layer_b_cnt-raw_class)]
+    normal_cli_b_2 = last_layer_b_raw[normal_cli_idxs]
+    # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    # np_aggr_b = np.asarray(aggregation_w)
+    last_layer_b_2 = np.average(normal_cli_b_2, weights=np_aggr_b[normal_cli_idxs], axis = 0)
+    
+    first_avg_w[start_i_2:end_i_2] = last_layer_w_2
+    first_avg_w[-(last_layer_b_cnt-raw_class)] = last_layer_b_2.flatten()
+    print(f"after processing, first_avg_w is {first_avg_w[-last_layer_w_cnt: -(last_layer_w_cnt+512)]}")
+    return first_avg_w
 
 class Defense:
     def __init__(self, *args, **kwargs):
@@ -641,16 +713,24 @@ class KrMLRFL(Defense):
     we implement the robust aggregator at: https://papers.nips.cc/paper/6617-machine-learning-with-adversaries-byzantine-tolerant-gradient-descent.pdf
     and we integrate both krum and multi-krum in this single class
     """
-    def __init__(self, num_workers, num_adv, num_valid = 1, *args, **kwargs):
+    def __init__(self, total_workers, num_workers, num_adv, num_valid = 1, *args, **kwargs):
         # assert (mode in ("krum", "multi-krum"))
         self.num_valid = num_valid
         self.num_workers = num_workers
         self.s = num_adv
+        self.choosing_frequencies = {}
+        self.accumulate_t_scores = {}
+        self.pairwise_cs = np.zeros((total_workers+1, total_workers+1))
+        # print(self.pairwise_cs.shape)
+        self.pairwise_choosing_frequencies = np.zeros((total_workers, total_workers))
 
     def exec(self, client_models, num_dps,net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, device, *args, **kwargs):
+        from sklearn.cluster import KMeans
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
         trusted_models = []
         neighbor_distances = []
+        bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight = extract_classifier_layer(client_models, pseudo_avg_net, net_avg)
+        print(f"num_dps shape is: {len(num_dps)}")
         for i, g_i in enumerate(vectorize_nets):
             distance = []
             for j in range(i+1, len(vectorize_nets)):
@@ -675,15 +755,10 @@ class KrMLRFL(Defense):
             topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
             scores.append(sum(np.take(dists, topk_ind)))
         
+        # use krum as the baseline to improve, mark the one chosen by krum as trusted
         if self.num_valid == 1:
             i_star = scores.index(min(scores))
-            # logger.info("@@@@ The chosen trusted worker is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
-            # aggregated_model = client_models[0] # slicing which doesn't really matter
-            # load_model_weight(aggregated_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
-            # neo_net_list = [aggregated_model]
-            # logger.info("Norm of the chosen trusted worker: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
-            # neo_net_freq = [1.0]
-            # return neo_net_list, neo_net_freq
+            logger.info("@@@@ The chosen trusted worker is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
             trusted_models.append(i_star)
         else:
             # topk_ind = np.argpartition(scores, nb_in_score+2)[:nb_in_score+2]
@@ -696,130 +771,116 @@ class KrMLRFL(Defense):
             # logger.info("Num data points: {}".format(num_dps))
             logger.info("Num selected data points: {}".format(selected_num_dps))
             logger.info("The chosen ones are users: {}, which are global users: {}".format(topk_ind, [g_user_indices[ti] for ti in topk_ind]))
-            #aggregated_grad = np.mean(np.array(vectorize_nets)[topk_ind, :], axis=0)
-            # aggregated_grad = np.average(np.array(vectorize_nets)[topk_ind, :], weights=reconstructed_freq, axis=0).astype(np.float32)
-
-            # aggregated_model = client_models[0] # slicing which doesn't really matter
-            # load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
-            # neo_net_list = [aggregated_model]
-            #logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
-            # neo_net_freq = [1.0]
-            # return neo_net_list, neo_net_freq
 
             for ind in topk_ind:
                 trusted_models.append(ind)
         
+        
+        total_client = len(g_user_indices)
+        round_cs_pairwise = np.zeros((total_client, total_client))
+        # UPDATE CUMULATIVE COSINE SIMILARITY 
+        for i, g_i in enumerate(g_user_indices):
+            for j, g_j in enumerate(g_user_indices):
+                # if i != j:
+                point = vectorize_nets[i].flatten()
+                base_p = vectorize_nets[j].flatten()
+                cs = np.dot(point, base_p)/(np.linalg.norm(point)*np.linalg.norm(base_p))
+                self.pairwise_choosing_frequencies[g_i][g_j] = self.pairwise_choosing_frequencies[g_i][g_j] + 1.0
+                # print("freq_appear: ", freq_appear)
+                round_cs_pairwise[i][j] = cs.flatten()
+
+        # round_cs_pairwise = normalize(round_cs_pairwise, norm='max', axis=0)
+        scaler = MinMaxScaler()
+        round_cs_pairwise = scaler.fit_transform(round_cs_pairwise)
+        # print(f"round_cs_pairwise is: {round_cs_pairwise}")
+        for i, g_i in enumerate(g_user_indices):
+            for j, g_j in enumerate(g_user_indices):
+                freq_appear = self.pairwise_choosing_frequencies[g_i][g_j]
+                self.pairwise_cs[g_i][g_j] = (freq_appear - 1)/freq_appear*self.pairwise_cs[g_i][g_j] +  1/freq_appear*round_cs_pairwise[i][j]
+        
         # From now on, trusted_models contain the index base models treated as valid users.
-        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
-        # pseudo_avg_w = vectorize_net(pseudo_avg_net).detach().cpu().numpy()
-        # baseline_net = self.weighted_average_oracle(vectorize_nets, net_freq)
-        # glob_model = client_models[0]
-        # load_model_weight(glob_model, torch.from_numpy(baseline_net.astype(np.float32)).to(device)) 
-        bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight = extract_classifier_layer(client_models, pseudo_avg_net, net_avg)
-        t_score, raw_t_score = self.get_trustworthy_scores(trusted_models, weight_update)
-        c_score = self.get_contribution_scores(trusted_models, weight_update, glob_update)
+        raw_t_score = self.get_trustworthy_scores(glob_update, weight_update)
+        t_score = []
+        for idx, cli in enumerate(g_user_indices):
+            # increase the frequency of the selected choosen clients
+            self.choosing_frequencies[cli] = self.choosing_frequencies.get(cli, 0) + 1
+            # update the accumulator
+            self.accumulate_t_scores[cli] = ((self.choosing_frequencies[cli] - 1) / self.choosing_frequencies[cli]) * self.accumulate_t_scores.get(cli, 0) + (1 / self.choosing_frequencies[cli]) *  raw_t_score[idx]
+            t_score.append(self.accumulate_t_scores[cli])
         
-        # print("trustworthy score is: ", t_score)
-        # print("contribution score is: ", c_score)
+        t_score = np.array(t_score)
+        # threshold = np.quantile(t_score, 0.5)
+        threshold = min(0.5, np.median(t_score))
         
-        f_score = [t_score[i] + c_score[i] for i in range(len(t_score))]
-        # print("f_score: ", f_score)
-        # pred_attackers = pred_attackers_indx = np.argwhere(np.asarray(f_score) == 0).flatten()
-        # pred_attackers = pred_attackers_indx = np.argwhere(np.asarray(t_score) == 0).flatten()
-        # pred_attackers_indx = np.argwhere(np.asarray(t_score) == 0).flatten()
+        
         participated_attackers = []
         for in_, id_ in enumerate(g_user_indices):
             if id_ in selected_attackers:
                 participated_attackers.append(in_)
         print("At round: ", round)
-        # print("pred_attackers_indx: ", pred_attackers_indx)
         print("real attackers indx: ", participated_attackers)
-        # print("global_pred_attackers_indx: ", [g_user_indices[ind_] for ind_ in pred_attackers_indx])
-        # global_pred_attackers_indx = [g_user_indices[ind_] for ind_ in pred_attackers_indx]
-
-        print("trustworthy score is: ", t_score)
-        print("contribution score is: ", c_score)
-        print("f_score: ", f_score)
-
+        print(f'[T_SCORE] median score: {np.median(t_score)}')
+        print("[T_SCORE] trustworthy score is: ", t_score)
         
-        f_score = [t_score[i] + c_score[i] for i in range(len(t_score))]
-        print("f_score is: ", f_score)
-        # self.get_predicted_attackers(weight_list, avg_weight, weight_update, 10)
-        temp_score = self.get_predicted_attackers(weight_list, prev_avg_weight, weight_update, 10)
-        print("raw_t_score: ", raw_t_score)
-        print("raw_temp_score: ", temp_score)
-        print("raw_sum: ", [raw_t_score[i] + temp_score[i] for i in range(10)])
-        raw_sum = [raw_t_score[i] + temp_score[i] for i in range(10)]
-        raw_sum = raw_sum/sum(raw_sum)
-        raw_sum = np.asarray(raw_sum).flatten()
-        # mean_sum = sum(raw_sum)/10
-        pred_att_idxs = (-raw_sum).argsort()[:1].flatten()
-        print(np.argsort(-raw_sum, axis=-1))
-        print("pred_att_idxs: ", pred_att_idxs)
-        print("global_pred_attackers_indx: ", [g_user_indices[ind_] for ind_ in pred_att_idxs])
-        global_pred_attackers_indx = [g_user_indices[ind_] for ind_ in pred_att_idxs]
-        pred_attackers_indx = pred_att_idxs.copy()
-        log_data_r = f"\nAt round: {round},\n, global_attackers: {selected_attackers},\n glob_predicted: {global_pred_attackers_indx},\n  pred_attackers_indx is: {pred_attackers_indx} \n real attackers indx: {participated_attackers}, \n t_score is: {t_score}, \n c_score is: {c_score}, \n f_score is: {f_score}"
-        with open("logging/exper_log.txt", "a+") as lf_r:
-            lf_r.write(log_data_r)
-        # pred_att_idxs = np.argwhere(np.asarray(raw_sum) == 0).flatten()
-        #TRY TO COMBINE Trustworthy score and predicted abnormal score.
+        attacker_local_idxs = [ind_ for ind_ in range(len(g_user_indices)) if t_score[ind_] > threshold]
+        print("[T_SCORE] attacker_local_idxs is: ", attacker_local_idxs)
+        global_pred_attackers_indx = [g_user_indices[ind_] for ind_ in attacker_local_idxs]
+        print("[T_SCORE] global_pred_attackers_indx: ", global_pred_attackers_indx)
 
+        # NOW CHECK FOR ROUND 50
+        if round >= 50: 
+            # TODO: find dynamic threshold
+            print("[PAIRWISE] self.pairwise_cs.shape: ", self.pairwise_cs.shape)
+            
+            cummulative_cs = self.pairwise_cs[np.ix_(g_user_indices, g_user_indices)]
+            print("cummulative_cs: ", cummulative_cs)
+            kmeans = KMeans(n_clusters = 2)
+            pred_labels = kmeans.fit_predict(cummulative_cs)
+            label_att = 1 - pred_labels[i_star]
+            pred_attackers_indx = np.argwhere(np.asarray(pred_labels) == label_att).flatten()
+            print("[PAIRWISE] pred_attackers_indx: ", pred_attackers_indx)
+            attacker_local_idxs = np.union1d(attacker_local_idxs, pred_attackers_indx)
+            if len(attacker_local_idxs) == len(g_user_indices):
+                choosen_idx = np.argmin(t_score)
+                attacker_local_idxs = [id_ for id_ in attacker_local_idxs if id_ != choosen_idx]
+                
         neo_net_list = []
         neo_net_freq = []
         selected_net_indx = []
-        if (round - 1)%10:
-            pred_attackers_indx = []
         for idx, net in enumerate(client_models):
-            if idx not in pred_attackers_indx:
+            if idx not in attacker_local_idxs:
                 neo_net_list.append(net)
                 neo_net_freq.append(1.0)
                 selected_net_indx.append(idx)
-        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
-        selected_num_dps = np.array(num_dps)[selected_net_indx]
+        # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
+        # selected_num_dps = np.array(num_dps)[selected_net_indx]
+        # reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+        selected_num_dps = np.array(num_dps)
         reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
-
+        avg_net_vector = avg_by_class(vectorize_nets, reconstructed_freq, attacker_local_idxs)
+        
         logger.info("Num data points: {}".format(num_dps))
         logger.info("Num selected data points: {}".format(selected_num_dps))
-        # logger.info("The chosen ones are users: {}, which are global users: {}".format(selected_net_indx, [g_user_indices[ti] for ti in selected_net_indx]))
+        logger.info("The chosen ones are users: {}, which are global users: {}".format(selected_net_indx, [g_user_indices[ti] for ti in selected_net_indx]))
         
-        aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
+        # aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
+        aggregated_grad = avg_net_vector.astype(np.float32)
 
         aggregated_model = client_models[0] # slicing which doesn't really matter
         load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
-        pred_g_attacker = [g_user_indices[i] for i in pred_attackers_indx]
-        # aggregated_w = self.weighted_average_oracle(vectorize_nets, reconstructed_freq)
-        # aggregated_model = client_models[0] # slicing which doesn't really matter
-        # load_model_weight(aggregated_model, torch.from_numpy(aggregated_w.astype(np.float32)).to(device))
+        pred_g_attacker = [g_user_indices[i] for i in attacker_local_idxs]
         neo_net_list = [aggregated_model]
         neo_net_freq = [1.0]
         return neo_net_list, neo_net_freq, pred_g_attacker
 
-    def get_trustworthy_scores(self, trusted_models_idxs, weight_update):
-        score = np.zeros((len(weight_update), len(trusted_models_idxs)))
-        for m_idx, g_model_idx in enumerate(trusted_models_idxs):
-            base_model_update = weight_update[g_model_idx]
-            # print("base_model_update: ", base_model_update)
-            cs_dist = get_cs_on_base_net(weight_update, base_model_update)
-            for idx, cs in enumerate(cs_dist):
-                score[idx, m_idx] = cs
-        print("raw score:= ", score)
-        score_avg = np.average(score, 1)
+    def get_trustworthy_scores(self, global_update, weight_update):
+        # print("base_model_update: ", base_model_update)
+        cs_dist = get_cs_on_base_net(weight_update, global_update)
+        score = np.array(cs_dist)
         # print("score_avg:= ", score_avg)
-        norm_score = min_max_scale(score_avg)
-        final_score = [1.0 if norm_s > 0.25 else 0.0 for norm_s in norm_score]
-        return final_score, 1.0 - norm_score
-    
-    def get_contribution_scores(self, trusted_models_idxs, weight_update, base_w_update):
-        # First, calculate the contribution threshold using the trusted client list
-
-        client_ed_list = get_ed_on_base_net(weight_update, base_w_update)
-        client_ed_list = np.asarray(client_ed_list)
-        b_h = np.average(client_ed_list[trusted_models_idxs])
-        contribution_s = (b_h - client_ed_list)/b_h
-        # print("contribution_s: ", contribution_s)
-        final_score = [1.0 if contribution_s[i] >= 0 else 0.0 for i in range(len(contribution_s))]
-        return final_score
+        norm_score = min_max_scale(score)
+        
+        return norm_score
         # for cli_ind, weight_update in enumerate(weight_update):
 
     def get_predicted_attackers(self, weight_list, avg_weight, weight_update, total_client):
@@ -842,38 +903,83 @@ class KrMLRFL(Defense):
         print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
         return temp_score
 
-        # print("stack_dis.shape: ", stack_dis.shape)
-        # kmeans = KMeans(n_clusters = 2)
-        # pred_labels = kmeans.fit_predict(stack_dis)
-        # print("pred_labels is: ", pred_labels)
-        # label_0 = np.count_nonzero(pred_labels == 0)
-        # label_1 = total_client - label_0
-        # cnt_pred_attackers = label_0 if label_0 <= label_1 else label_1
-        # label_att = 0 if label_0 <= label_1 else 1
-        # print("label_att: ", label_att)
+# class UpperBound(Defense):
+#     def __init__(self, *args, **kwargs):
+#         pass
+    
+#     def exec(self, client_models, num_dps, attacker_idxs, g_user_indices, device=torch.device("cuda"), *args, **kwargs):
+#         #GET KRUM VECTOR
+#         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+#         neighbor_distances = []
+#         for i, g_i in enumerate(vectorize_nets):
+#             distance = []
+#             for j in range(i+1, len(vectorize_nets)):
+#                 if i != j:
+#                     g_j = vectorize_nets[j]
+#                     distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
+#             neighbor_distances.append(distance)
+
+#         # compute scores
+#         # nb_in_score = self.num_workers-self.s-2
+#         nb_in_score = 10 - 1 - 2
+#         scores = []
+#         for i, g_i in enumerate(vectorize_nets):
+#             dists = []
+#             for j, g_j in enumerate(vectorize_nets):
+#                 if j == i:
+#                     continue
+#                 if j < i:
+#                     dists.append(neighbor_distances[j][i - j - 1])
+#                 else:
+#                     dists.append(neighbor_distances[i][j - i - 1])
+#             # alternative to topk in pytorch and tensorflow
+#             topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
+#             scores.append(sum(np.take(dists, topk_ind)))
         
-    def weighted_average_oracle(self, points, weights):
-        """Computes weighted average of atoms with specified weights
-        Args:
-            points: list, whose weighted average we wish to calculate
-                Each element is a list_of_np.ndarray
-            weights: list of weights of the same length as atoms
-        """
-        ### original implementation in TFF
-        #tot_weights = np.sum(weights)
-        #weighted_updates = [np.zeros_like(v) for v in points[0]]
-        #for w, p in zip(weights, points):
-        #    for j, weighted_val in enumerate(weighted_updates):
-        #        weighted_val += (w / tot_weights) * p[j]
-        #return weighted_updates
-        ####
-        tot_weights = np.sum(weights)
-        weighted_updates = np.zeros(points[0].shape)
-        for w, p in zip(weights, points):
-            weighted_updates += (w * p / tot_weights)
-        return weighted_updates
+#         i_star = scores.index(min(scores))
+#         logger.info("@@@@ The chosen one is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
+#         flatten_krum_w = vectorize_nets[i_star]
+        
+#         # aggregated_model = client_models[0] # slicing which doesn't really matter
+#         # load_model_weight(aggregated_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
+#         # neo_net_list = [aggregated_model]
+#         # logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
+#         # neo_net_freq = [1.0]
+#         # return neo_net_list, neo_net_freq
+        
+        
+        
+#         # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+#         selected_idxs = [idx for idx in range(len(client_models)) if idx not in attacker_idxs]
+#         print("selected_idxs: ", selected_idxs)
+#         selected_num_dps = np.array(num_dps)[selected_idxs]
+#         reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+#         logger.info("Num data points: {}".format(num_dps))
+#         logger.info("Num selected data points: {}".format(selected_num_dps))
+#         vectorize_nets = np.asarray(vectorize_nets)[selected_idxs]
+        
+#         aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
 
-
+#         # REPORT COSINE SIMILARITY
+#         cs = dot(aggregated_grad, aggregated_grad)/(norm(aggregated_grad)*norm(aggregated_grad)).flatten()
+        
+#         # REPORT EUCLIDEAN DISTANCE
+#         point = aggregated_grad.flatten().reshape(-1,1)
+#         base_p = aggregated_grad.flatten().reshape(-1,1)
+#         ds = point - base_p
+#         sum_sq = np.dot(ds.T, ds)
+#         eu_dist = float(np.sqrt(sum_sq).flatten())
+#         # ed_list.append(float(np.sqrt(sum_sq).flatten()))
+#         # client_cs.append(float(cs.flatten()))
+        
+#         aggregated_model = client_models[0] # slicing which doesn't really matter
+#         load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device)) 
+#         neo_net_list = [aggregated_model]
+#         neo_net_freq = [1.0]
+        
+        
+#         return neo_net_list, neo_net_freq, cs, eu_dist             
+        
 class UpperBound(Defense):
     def __init__(self, *args, **kwargs):
         pass
@@ -881,42 +987,6 @@ class UpperBound(Defense):
     def exec(self, client_models, num_dps, attacker_idxs, g_user_indices, device=torch.device("cuda"), *args, **kwargs):
         #GET KRUM VECTOR
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
-        neighbor_distances = []
-        for i, g_i in enumerate(vectorize_nets):
-            distance = []
-            for j in range(i+1, len(vectorize_nets)):
-                if i != j:
-                    g_j = vectorize_nets[j]
-                    distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
-            neighbor_distances.append(distance)
-
-        # compute scores
-        # nb_in_score = self.num_workers-self.s-2
-        nb_in_score = 10 - 1 - 2
-        scores = []
-        for i, g_i in enumerate(vectorize_nets):
-            dists = []
-            for j, g_j in enumerate(vectorize_nets):
-                if j == i:
-                    continue
-                if j < i:
-                    dists.append(neighbor_distances[j][i - j - 1])
-                else:
-                    dists.append(neighbor_distances[i][j - i - 1])
-            # alternative to topk in pytorch and tensorflow
-            topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
-            scores.append(sum(np.take(dists, topk_ind)))
-        
-        i_star = scores.index(min(scores))
-        logger.info("@@@@ The chosen one is user: {}, which is global user: {}".format(scores.index(min(scores)), g_user_indices[scores.index(min(scores))]))
-        flatten_krum_w = vectorize_nets[i_star]
-        
-        # aggregated_model = client_models[0] # slicing which doesn't really matter
-        # load_model_weight(aggregated_model, torch.from_numpy(vectorize_nets[i_star]).to(device))
-        # neo_net_list = [aggregated_model]
-        # logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
-        # neo_net_freq = [1.0]
-        # return neo_net_list, neo_net_freq
         
         
         
@@ -930,18 +1000,6 @@ class UpperBound(Defense):
         vectorize_nets = np.asarray(vectorize_nets)[selected_idxs]
         
         aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
-
-        # REPORT COSINE SIMILARITY
-        cs = dot(aggregated_grad, aggregated_grad)/(norm(aggregated_grad)*norm(aggregated_grad)).flatten()
-        
-        # REPORT EUCLIDEAN DISTANCE
-        point = aggregated_grad.flatten().reshape(-1,1)
-        base_p = aggregated_grad.flatten().reshape(-1,1)
-        ds = point - base_p
-        sum_sq = np.dot(ds.T, ds)
-        eu_dist = float(np.sqrt(sum_sq).flatten())
-        # ed_list.append(float(np.sqrt(sum_sq).flatten()))
-        # client_cs.append(float(cs.flatten()))
         
         aggregated_model = client_models[0] # slicing which doesn't really matter
         load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device)) 
@@ -949,9 +1007,37 @@ class UpperBound(Defense):
         neo_net_freq = [1.0]
         
         
-        return neo_net_list, neo_net_freq, cs, eu_dist             
+        return neo_net_list, neo_net_freq         
+        
+
+class UpperBoundByClass(Defense):
+    def __init__(self, *args, **kwargs):
+        pass
+    
+    def exec(self, client_models, num_dps, attacker_idxs, g_user_indices, device=torch.device("cuda"), *args, **kwargs):
+        #GET KRUM VECTOR
+        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        selected_idxs = [idx for idx in range(len(client_models)) if idx not in attacker_idxs]
+        print("selected_idxs: ", selected_idxs)
+        selected_num_dps = np.array(num_dps)[selected_idxs]
+        reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+        logger.info("Num data points: {}".format(num_dps))
+        logger.info("Num selected data points: {}".format(selected_num_dps))
+        vectorize_nets = np.asarray(vectorize_nets)[selected_idxs]
+        
+        # aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
+
+        aggregated_grad = avg_by_class(vectorize_nets, reconstructed_freq, attacker_idxs)
+        
+        aggregated_model = client_models[0] # slicing which doesn't really matter
+        load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device)) 
+        neo_net_list = [aggregated_model]
+        neo_net_freq = [1.0]
         
         
+        return neo_net_list, neo_net_freq         
+        
+               
         
 
 

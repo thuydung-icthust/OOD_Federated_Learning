@@ -808,8 +808,11 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased(num_workers=self.part_nets_per_round, num_adv=1)
         elif arguments["defense_technique"] == "krum-multilayer":
-            self._defender = KrMLRFL(num_workers=self.part_nets_per_round, num_adv=1, num_valid=1)
-
+            self._defender = KrMLRFL(num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, total_workers=self.num_nets)
+        elif arguments["defense_technique"] == "upper-by-class":
+            self._defender = UpperBoundByClass()
+        elif arguments["defense_technique"] == "upper-bound":
+            self._defender = UpperBound()
         else:
             NotImplementedError("Unsupported defense method !")
 
@@ -1050,10 +1053,25 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                                         g_user_indices=selected_node_indices,
                                                         round=flr,
                                                         device=self.device)
+            elif self.defense_technique == "upper-by-class":
+                participated_attackers = []
+                for in_, id_ in enumerate(selected_node_indices):
+                    if id_ in selected_attackers:
+                        participated_attackers.append(in_)
+                net_list, net_freq = self._defender.exec(client_models=net_list, num_dps=num_data_points, g_user_indices=selected_node_indices, device=self.device, attacker_idxs=participated_attackers)
+            
+            elif self.defense_technique == "upper-bound":
+                participated_attackers = []
+                for in_, id_ in enumerate(selected_node_indices):
+                    if id_ in selected_attackers:
+                        participated_attackers.append(in_)
+                net_list, net_freq = self._defender.exec(client_models=net_list, num_dps=num_data_points, g_user_indices=selected_node_indices, device=self.device, attacker_idxs=participated_attackers)
+            
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
                 net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
-                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        # num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        num_dps=num_data_points,
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
                                                         g_user_indices=selected_node_indices,

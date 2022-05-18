@@ -10,7 +10,7 @@ python simulated_averaging.py \
 --model vgg9 \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method krum-multilayer \
+--defense_method upper-by-class \
 --attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \
@@ -22,4 +22,4 @@ python simulated_averaging.py \
 --poison_type southwest \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---device=cuda:2
+--device=cuda:3

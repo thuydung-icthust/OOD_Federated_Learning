@@ -10,7 +10,7 @@ python simulated_averaging.py \
 --model vgg9 \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method krum-multilayer \
+--defense_method upper-bound \
 --attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \
