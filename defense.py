@@ -602,6 +602,7 @@ class KrMLRFL(Defense):
         self.accumulate_t_scores = {}
         self.pairwise_w = np.zeros((total_workers+1, total_workers+1))
         self.pairwise_b = np.zeros((total_workers+1, total_workers+1))
+        self.is_attacker_prob = [0.0 for _ in range(total_workers)]
         
         # print(self.pairwise_cs.shape)
         logger.info("Starting performing KrMLRFL...")
@@ -719,9 +720,11 @@ class KrMLRFL(Defense):
         # From now on, trusted_models contain the index base models treated as valid users.
         raw_t_score = self.get_trustworthy_scores(glob_update, weight_update)
         t_score = []
+        freq_list = []
         for idx, cli in enumerate(g_user_indices):
             # increase the frequency of the selected choosen clients
             self.choosing_frequencies[cli] = self.choosing_frequencies.get(cli, 0) + 1
+            freq_list.append(self.choosing_frequencies[cli])
             # update the accumulator
             self.accumulate_t_scores[cli] = ((self.choosing_frequencies[cli] - 1) / self.choosing_frequencies[cli]) * self.accumulate_t_scores.get(cli, 0) + (1 / self.choosing_frequencies[cli]) *  raw_t_score[idx]
             t_score.append(self.accumulate_t_scores[cli])
@@ -765,15 +768,38 @@ class KrMLRFL(Defense):
             # kmeans.fit_predict(cummulative_cs)
             pred_labels = kmeans.fit_predict(saved_pairwise_sim)
             print("pred_labels of combination is: ", pred_labels)
+            print(f"trusted_index is: {trusted_index}")
             trusted_label = pred_labels[trusted_index]
-            label_attack = 0 if trusted_label == 1 else 1
-        
+            prob_arr = np.asarray(self.is_attacker_prob)
+            g_user_indices_np = np.asarray(g_user_indices)
+            print(f"prob_arr: {prob_arr[g_user_indices]}")
+            print(f"freq appearing is: {freq_list}")
+            if np.sum(prob_arr[g_user_indices]) == 0.0:
+                label_attack = 0 if trusted_label == 1 else 1
+            else: 
+                cluster_0_idxs = [i_ for i_ in range(total_client) if pred_labels[i_] == 0]
+                cluster_1_idxs = [i_ for i_ in range(total_client) if pred_labels[i_] == 1]
+                g_cluster_0_idxs = g_user_indices_np[cluster_0_idxs]
+                g_cluster_1_idxs = g_user_indices_np[cluster_1_idxs]
+                prob_cluster_0 = np.sum(prob_arr[g_cluster_0_idxs])
+                prob_cluster_1 = np.sum(prob_arr[g_cluster_1_idxs])
+                
+                label_attack = 0 if prob_cluster_0>prob_cluster_1 else 1
+            
             pred_attackers_indx_2 = np.argwhere(np.asarray(pred_labels) == label_attack).flatten()
         
                 
             print("[PAIRWISE] pred_attackers_indx: ", pred_attackers_indx_2)
-            missed_attacker_idxs_by_kmeans = [at_id for at_id in participated_attackers if at_id not in pred_attackers_indx_2]
+            for cli_id in range(total_client):
+                g_id  = g_user_indices[cli_id]
+                
+                if cli_id in pred_attackers_indx_2:
+                    prob = 1.0
+                else:
+                    prob = 0.0
+                self.is_attacker_prob[g_id] = (self.choosing_frequencies[g_id]-1)/self.choosing_frequencies[g_id]*self.is_attacker_prob[g_id] + 1/self.choosing_frequencies[g_id]*prob
             
+            missed_attacker_idxs_by_kmeans = [at_id for at_id in participated_attackers if at_id not in pred_attackers_indx_2]
             attacker_local_idxs_2 = pred_attackers_indx_2
             
             pseudo_final_attacker_idxs = np.union1d(attacker_local_idxs_2, attacker_local_idxs)
