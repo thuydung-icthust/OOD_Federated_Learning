@@ -1108,6 +1108,7 @@ class UpperBoundByClass(Defense):
     
     def exec(self, client_models, num_dps, attacker_idxs, g_user_indices, device=torch.device("cuda"), *args, **kwargs):
         #GET KRUM VECTOR
+        print(f"attacker_idxs is: {attacker_idxs}")
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
         selected_idxs = [idx for idx in range(len(client_models)) if idx not in attacker_idxs]
         # print("selected_idxs: ", selected_idxs)
@@ -1116,10 +1117,22 @@ class UpperBoundByClass(Defense):
         logger.info("Num data points: {}".format(num_dps))
         logger.info("Num selected data points: {}".format(selected_num_dps))
         vectorize_nets = np.asarray(vectorize_nets)
+        new_freq = reconstructed_freq.copy()
+        for idx, freq in enumerate(reconstructed_freq):
+            if idx in attacker_idxs:
+                new_freq[idx] = freq/10.0
+        new_freq = [snd/sum(new_freq) for snd in new_freq]
+        print(f"new freq is: {new_freq}")
+                
+        logger.info("Num data points: {}".format(num_dps))
+        logger.info("Num selected data points: {}".format(selected_num_dps))
+        vectorize_nets = np.asarray(vectorize_nets)
         
+        aggregated_grad = np.average(vectorize_nets, weights=new_freq, axis=0).astype(np.float32)
+
         # aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
 
-        aggregated_grad = avg_by_class(vectorize_nets, reconstructed_freq, attacker_idxs)
+        # aggregated_grad = avg_by_class(vectorize_nets, reconstructed_freq, attacker_idxs)
         
         aggregated_model = client_models[0] # slicing which doesn't really matter
         load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device)) 
