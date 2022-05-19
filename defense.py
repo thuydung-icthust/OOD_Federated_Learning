@@ -45,57 +45,149 @@ def avg_by_class(vectorize_nets, aggregation_w, attackers_idxs, raw_class = 0, t
         nparray: flatten weight of aggregation model
     """
     # print(f"total shape of a flatten w is: {vectorize_nets[0].shape}")
+    print(f"attackers_idxs is: {attackers_idxs}")
     total_cli = len(vectorize_nets)
+    # print(f"total cli is: {total_cli}")
     np_vectorize_nets = np.asarray(vectorize_nets)
     # print(np_vectorize_nets.shape)
     # print(f"total_cli is: {total_cli}")
-    # print(f"aggregation_w is: {len(aggregation_w)}")
+    # print(f"len of aggregation_w is: {len(aggregation_w)}")
+    # print(f"aggregation_w is: {aggregation_w}")
     last_layer_w_cnt = 5130 #last 10 element is the bias
+    total_param = vectorize_nets[0].shape[0]
+    # print(f"total param is: {total_param}")
     last_layer_b_cnt = 10
     start_idx = 512*target_class
     end_idx = 512*(target_class+1)
     
-    start_i, end_i = -(last_layer_w_cnt-start_idx), -(last_layer_w_cnt-end_idx)
+    start_i, end_i = total_param-(last_layer_w_cnt-start_idx), total_param-(last_layer_w_cnt-end_idx)
     start_idx_2 = 512*raw_class
     end_idx_2 = 512*(raw_class+1)
-    start_i_2, end_i_2 = -(last_layer_w_cnt-start_idx_2), -(last_layer_w_cnt-end_idx_2)
+    start_i_2, end_i_2 = total_param-(last_layer_w_cnt-start_idx_2), total_param-(last_layer_w_cnt-end_idx_2)
     first_avg_w = np.average(vectorize_nets, weights=aggregation_w, axis=0).astype(np.float32)
     normal_cli_idxs = [i for i in range(total_cli) if i not in attackers_idxs]
-    print(f"before starting, first_avg_w is {first_avg_w[-last_layer_w_cnt: -(last_layer_w_cnt+512)]}")
+    print(f"normal_cli_idxs is: {normal_cli_idxs}")
+    print(first_avg_w[-10: ])
     np_vectorize_nets = np.asarray(vectorize_nets)
-    # print(f"np_vectorize_nets.shape is: {np_vectorize_nets.shape}")
-    # print(np_vectorize_nets[:,start_idx:end_idx].shape)
-    last_layer_w = np_vectorize_nets[:, -last_layer_w_cnt:]
+
+    last_layer_w = np_vectorize_nets[:, total_param-last_layer_w_cnt:]
     normal_cli_w = last_layer_w[:,start_idx:end_idx][normal_cli_idxs]
-    # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    print(f"normal_cli_w.shape is {normal_cli_w.shape}")
     np_aggr_w = np.asarray(aggregation_w)
-    agg_last_layer_w = np.average(normal_cli_w, weights=np_aggr_w[normal_cli_idxs], axis = 0)
+    reconstructed_freq = np_aggr_w[normal_cli_idxs]
+    reconstructed_freq = reconstructed_freq/np.sum(reconstructed_freq)
+    print(f"reconstructed_freq: {reconstructed_freq}")
+    print(f"sum of reconstructed_freq: {np.sum(reconstructed_freq)}")
     
-    last_layer_b_target = np_vectorize_nets[:, -(last_layer_b_cnt-target_class)]
+    # print(f"w= {np_aggr_w[normal_cli_idxs]}")
+    
+    agg_last_layer_w = np.average(normal_cli_w, weights=reconstructed_freq, axis = 0)
+    
+    last_layer_b_target = np_vectorize_nets[:, total_param-(last_layer_b_cnt-target_class)]
     normal_cli_b = last_layer_b_target[normal_cli_idxs]
     # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
-    np_aggr_b = np.asarray(aggregation_w)
-    last_layer_b = np.average(normal_cli_b, weights=np_aggr_b[normal_cli_idxs], axis = 0)
+    # np_aggr_b = np.asarray(aggregation_w)
+    last_layer_b = np.average(normal_cli_b, weights=reconstructed_freq, axis = 0)
     
     first_avg_w[start_i:end_i] = agg_last_layer_w
-    first_avg_w[-(last_layer_b_cnt-target_class)] = last_layer_b.flatten()
+    # first_avg_w[total_param-(last_layer_b_cnt-target_class)] = last_layer_b.flatten()
     
-    # FOR RAW CLASS , e.g. class 0
-    # last_layer_w = np_vectorize_nets[:, -last_layer_w_cnt:]
-    normal_cli_w_2 = last_layer_w[:,start_idx_2:end_idx_2][normal_cli_idxs]
-    # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
-    # np_aggr_w = np.asarray(aggregation_w)
-    last_layer_w_2 = np.average(normal_cli_w_2, weights=np_aggr_w[normal_cli_idxs], axis = 0)
+    # # FOR RAW CLASS , e.g. class 0
+    # # last_layer_w = np_vectorize_nets[:, -last_layer_w_cnt:]
+    # normal_cli_w_2 = last_layer_w[:,start_idx_2:end_idx_2][normal_cli_idxs]
+    # # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    # # np_aggr_w = np.asarray(aggregation_w)
+    # last_layer_w_2 = np.average(normal_cli_w_2, weights=reconstructed_freq, axis = 0)
     
-    last_layer_b_raw = np_vectorize_nets[:, -(last_layer_b_cnt-raw_class)]
-    normal_cli_b_2 = last_layer_b_raw[normal_cli_idxs]
+    # last_layer_b_raw = np_vectorize_nets[:, total_param-(last_layer_b_cnt-raw_class)]
+    # normal_cli_b_2 = last_layer_b_raw[normal_cli_idxs]
+    # # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    # # np_aggr_b = np.asarray(aggregation_w)
+    # last_layer_b_2 = np.average(normal_cli_b_2, weights=reconstructed_freq, axis = 0)
+    
+    # first_avg_w[start_i_2:end_i_2] = last_layer_w_2
+    # first_avg_w[total_param-(last_layer_b_cnt-raw_class)] = last_layer_b_2.flatten()
+    # print(f"after processing, first_avg_b is")
+    # print(first_avg_w[-10: ])
+    return first_avg_w
+
+def avg_by_class_new(vectorize_nets, aggregation_w, attackers_idxs, raw_class = 0, target_class = 9):
+    """Calculate the aggregated model by dismiss the poisoning weight of predicted attackers
+
+    Args:
+        vectorize_nets (list of nparray): list of all flatten local weights
+        aggregation_w (list): array of aggregation weight, ratio with numbers of training data
+        raw_class (int, optional): _description_. Defaults to 0.
+        target_class (int, optional): _description_. Defaults to 9.
+        attackers_idxs (list): list contain round idxs of all attackers
+
+    Raises:
+        NotImplementedError: _description_
+
+    Returns:
+        nparray: flatten weight of aggregation model
+    """
+    # print(f"total shape of a flatten w is: {vectorize_nets[0].shape}")
+    print(f"attackers_idxs is: {attackers_idxs}")
+    total_cli = len(vectorize_nets)
+    # print(f"total cli is: {total_cli}")
+    np_vectorize_nets = np.asarray(vectorize_nets)
+    last_layer_w_cnt = 5130 #last 10 element is the bias
+    total_param = vectorize_nets[0].shape[0]
+    # print(f"total param is: {total_param}")
+    last_layer_b_cnt = 10
+    start_idx = 512*target_class
+    end_idx = 512*(target_class+1)
+    
+    start_i, end_i = total_param-(last_layer_w_cnt-start_idx), total_param-(last_layer_w_cnt-end_idx)
+    start_idx_2 = 512*raw_class
+    end_idx_2 = 512*(raw_class+1)
+    start_i_2, end_i_2 = total_param-(last_layer_w_cnt-start_idx_2), total_param-(last_layer_w_cnt-end_idx_2)
+    first_avg_w = np.average(vectorize_nets, weights=aggregation_w, axis=0).astype(np.float32)
+    normal_cli_idxs = [i for i in range(total_cli) if i not in attackers_idxs]
+    print(f"normal_cli_idxs is: {normal_cli_idxs}")
+    print(first_avg_w[-10: ])
+    np_vectorize_nets = np.asarray(vectorize_nets)
+
+    last_layer_w = np_vectorize_nets[:, total_param-last_layer_w_cnt:]
+    normal_cli_w = last_layer_w[normal_cli_idxs]
+    print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    np_aggr_w = np.asarray(aggregation_w)
+    reconstructed_freq = np_aggr_w[normal_cli_idxs]
+    reconstructed_freq = reconstructed_freq/np.sum(reconstructed_freq)
+    print(f"reconstructed_freq: {reconstructed_freq}")
+    print(f"sum of reconstructed_freq: {np.sum(reconstructed_freq)}")
+    
+    # print(f"w= {np_aggr_w[normal_cli_idxs]}")
+    
+    agg_last_layer_w = np.average(normal_cli_w, weights=reconstructed_freq, axis = 0)
+    
+    last_layer_b_target = np_vectorize_nets[:, total_param-(last_layer_b_cnt-target_class)]
+    normal_cli_b = last_layer_b_target[normal_cli_idxs]
     # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
     # np_aggr_b = np.asarray(aggregation_w)
-    last_layer_b_2 = np.average(normal_cli_b_2, weights=np_aggr_b[normal_cli_idxs], axis = 0)
+    last_layer_b = np.average(normal_cli_b, weights=reconstructed_freq, axis = 0)
     
-    first_avg_w[start_i_2:end_i_2] = last_layer_w_2
-    first_avg_w[-(last_layer_b_cnt-raw_class)] = last_layer_b_2.flatten()
-    print(f"after processing, first_avg_w is {first_avg_w[-last_layer_w_cnt: -(last_layer_w_cnt+512)]}")
+    first_avg_w[-5130:] = agg_last_layer_w
+    # first_avg_w[total_param-(last_layer_b_cnt-target_class)] = last_layer_b.flatten()
+    
+    # # FOR RAW CLASS , e.g. class 0
+    # # last_layer_w = np_vectorize_nets[:, -last_layer_w_cnt:]
+    # normal_cli_w_2 = last_layer_w[:,start_idx_2:end_idx_2][normal_cli_idxs]
+    # # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    # # np_aggr_w = np.asarray(aggregation_w)
+    # last_layer_w_2 = np.average(normal_cli_w_2, weights=reconstructed_freq, axis = 0)
+    
+    # last_layer_b_raw = np_vectorize_nets[:, total_param-(last_layer_b_cnt-raw_class)]
+    # normal_cli_b_2 = last_layer_b_raw[normal_cli_idxs]
+    # # print(f"normal_cli_w.shape is {normal_cli_w.shape}")
+    # # np_aggr_b = np.asarray(aggregation_w)
+    # last_layer_b_2 = np.average(normal_cli_b_2, weights=reconstructed_freq, axis = 0)
+    
+    # first_avg_w[start_i_2:end_i_2] = last_layer_w_2
+    # first_avg_w[total_param-(last_layer_b_cnt-raw_class)] = last_layer_b_2.flatten()
+    # print(f"after processing, first_avg_b is")
+    # print(first_avg_w[-10: ])
     return first_avg_w
 
 class Defense:
@@ -1018,12 +1110,12 @@ class UpperBoundByClass(Defense):
         #GET KRUM VECTOR
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
         selected_idxs = [idx for idx in range(len(client_models)) if idx not in attacker_idxs]
-        print("selected_idxs: ", selected_idxs)
-        selected_num_dps = np.array(num_dps)[selected_idxs]
+        # print("selected_idxs: ", selected_idxs)
+        selected_num_dps = np.array(num_dps)
         reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
         logger.info("Num data points: {}".format(num_dps))
         logger.info("Num selected data points: {}".format(selected_num_dps))
-        vectorize_nets = np.asarray(vectorize_nets)[selected_idxs]
+        vectorize_nets = np.asarray(vectorize_nets)
         
         # aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
 
