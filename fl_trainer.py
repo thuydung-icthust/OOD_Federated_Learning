@@ -925,36 +925,36 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
              #First we update the local updates of each client in this training round
             
             
-            # ADDITIONAL TRAINING FOR AN INVESTIGATING CLIENT (Without D_edge data)
-            custom_data_loader = self.clean_train_loader
-            custom_net = copy.deepcopy(self.net_avg)
-            
-            custom_criterion = nn.CrossEntropyLoss()
-            custom_optimizer = optim.SGD(custom_net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            custom_adv_optimizer = optim.SGD(custom_net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
-            custom_prox_optimizer = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
-            
-            
+            # # ADDITIONAL TRAINING FOR AN INVESTIGATING CLIENT (Without D_edge data)
             # custom_data_loader = self.clean_train_loader
-            print(f"g_selected_cli is: {g_selected_cli}")
-            poisoned_train_loader = load_poisoned_dataset_test(self.net_dataidx_map[g_selected_cli], self.batch_size) #choose random a client to duplicate
+            # custom_net = copy.deepcopy(self.net_avg)
             
-            custom_net_2 = copy.deepcopy(self.net_avg)
-            custom_criterion_2 = nn.CrossEntropyLoss()
-            custom_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            custom_adv_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
-            custom_prox_optimizer_2 = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
+            # custom_criterion = nn.CrossEntropyLoss()
+            # custom_optimizer = optim.SGD(custom_net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
+            # custom_adv_optimizer = optim.SGD(custom_net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
+            # custom_prox_optimizer = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
             
             
-            for param_group in custom_optimizer.param_groups:
-                logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
-            for e_ in range(1, self.local_training_period+1):
-                train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=self.criterion)        
+            # # custom_data_loader = self.clean_train_loader
+            # print(f"g_selected_cli is: {g_selected_cli}")
+            # poisoned_train_loader = load_poisoned_dataset_test(self.net_dataidx_map[g_selected_cli], self.batch_size) #choose random a client to duplicate
+            
+            # custom_net_2 = copy.deepcopy(self.net_avg)
+            # custom_criterion_2 = nn.CrossEntropyLoss()
+            # custom_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
+            # custom_adv_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
+            # custom_prox_optimizer_2 = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
+            
+            
+            # for param_group in custom_optimizer.param_groups:
+            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
+            # for e_ in range(1, self.local_training_period+1):
+            #     train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=self.criterion)        
                
-            for param_group in custom_optimizer_2.param_groups:
-                logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
-            for e_ in range(1, self.local_training_period+1):
-                train(custom_net_2, self.device, poisoned_train_loader, custom_optimizer_2, e_, log_interval=self.log_interval, criterion=self.criterion)        
+            # for param_group in custom_optimizer_2.param_groups:
+            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
+            # for e_ in range(1, self.local_training_period+1):
+            #     train(custom_net_2, self.device, poisoned_train_loader, custom_optimizer_2, e_, log_interval=self.log_interval, criterion=self.criterion)        
             
             for net_idx, global_client_indx in enumerate(selected_node_indices):
                 flatten_local_model = flatten_model(net_list[net_idx])

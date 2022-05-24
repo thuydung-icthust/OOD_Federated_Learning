@@ -67,6 +67,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
                 bias = param.data.cpu().numpy()
             else:
                 weight = param.data.cpu().numpy()
+        # bias_list.append(bias-avg_bias)
         bias_list.append(bias)
         weight_list.append(weight)
         weight_update.append(weight-avg_weight)

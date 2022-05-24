@@ -483,7 +483,7 @@ def load_poisoned_dataset(args):
 
             # downsample the poisoned dataset #################
             if args.attack_case == "edge-case":
-                num_sampled_poisoned_data_points = 200 # N
+                num_sampled_poisoned_data_points = 100 # N
                 samped_poisoned_data_indices = np.random.choice(saved_southwest_dataset_train.shape[0],
                                                                 num_sampled_poisoned_data_points,
                                                                 replace=False)
