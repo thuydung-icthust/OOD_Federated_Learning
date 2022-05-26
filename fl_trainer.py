@@ -749,7 +749,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 'clip': 0,
                 'server_lr': self.args_lr,
             }
-            self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=4)
+            self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=3)
         else:
             NotImplementedError("Unsupported defense method !")
 

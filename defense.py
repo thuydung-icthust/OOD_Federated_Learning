@@ -48,13 +48,13 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     avg_weight = None
     prev_avg_bias = None
     prev_avg_weight = None
-    for idx, param in enumerate(global_avg_net.classifier.parameters()):
+    for idx, param in enumerate(global_avg_net.fc2.parameters()):
         if idx:
             avg_bias = param.data.cpu().numpy()
         else:
             avg_weight = param.data.cpu().numpy()
 
-    for idx, param in enumerate(prev_net.classifier.parameters()):
+    for idx, param in enumerate(prev_net.fc2.parameters()):
         if idx:
             prev_avg_bias = param.data.cpu().numpy()
         else:
@@ -63,7 +63,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     for net in net_list:
         bias = None
         weight = None
-        for idx, param in enumerate(net.classifier.parameters()):
+        for idx, param in enumerate(net.fc2.parameters()):
             if idx:
                 bias = param.data.cpu().numpy()
             else:
@@ -845,8 +845,8 @@ class KrMLRFL(Defense):
             attacker_local_idxs_2 = pred_attackers_indx_2
             
             pseudo_final_attacker_idxs = np.union1d(attacker_local_idxs_2, attacker_local_idxs)
-            if round >= 50:
-                final_attacker_idxs = pseudo_final_attacker_idxs
+            if round >= 1:
+                final_attacker_idxs = attacker_local_idxs_2
             print("assumed final_attacker_idxs: ", pseudo_final_attacker_idxs)
 
 
@@ -904,7 +904,7 @@ class KrMLRFL(Defense):
         logger.info("Num selected data points: {}".format(selected_num_dps))
         # logger.info("The chosen ones are users: {}, which are global users: {}".format(selected_net_indx, [g_user_indices[ti] for ti in selected_net_indx]))
         n_params = vectorize_net_avg.shape[0]
-        rlr_avg_net = rlr_avg(vectorize_nets, vectorize_net_avg, reconstructed_freq, final_attacker_idxs, self.lr, n_params, device) 
+        rlr_avg_net = rlr_avg(vectorize_nets, vectorize_net_avg, reconstructed_freq, final_attacker_idxs, self.lr, n_params, device, robustLR_threshold=3) 
         # aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
 
         aggregated_model = client_models[0] # slicing which doesn't really matter
