@@ -740,7 +740,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased(num_workers=self.part_nets_per_round, num_adv=1)
         elif arguments["defense_technique"] == "krum-multilayer":
-            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1)
+            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, lr=self.args_lr, num_adv=1, num_valid=1)
         elif arguments["defense_technique"] == "rlr":
             pytorch_total_params = sum(p.numel() for p in self.net_avg.parameters())
             args_rlr={

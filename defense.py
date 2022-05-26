@@ -1,3 +1,4 @@
+from numpy import float32
 import pandas as pd
 import torch
 
@@ -47,13 +48,13 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     avg_weight = None
     prev_avg_bias = None
     prev_avg_weight = None
-    for idx, param in enumerate(global_avg_net.fc2.parameters()):
+    for idx, param in enumerate(global_avg_net.classifier.parameters()):
         if idx:
             avg_bias = param.data.cpu().numpy()
         else:
             avg_weight = param.data.cpu().numpy()
 
-    for idx, param in enumerate(prev_net.fc2.parameters()):
+    for idx, param in enumerate(prev_net.classifier.parameters()):
         if idx:
             prev_avg_bias = param.data.cpu().numpy()
         else:
@@ -62,7 +63,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     for net in net_list:
         bias = None
         weight = None
-        for idx, param in enumerate(net.fc2.parameters()):
+        for idx, param in enumerate(net.classifier.parameters()):
             if idx:
                 bias = param.data.cpu().numpy()
             else:
@@ -73,6 +74,50 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
 
     return bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight
 
+def rlr_avg(vectorize_nets, vectorize_avg_net, freq, attacker_idxs, lr, n_params, device, robustLR_threshold=4):
+    lr_vector = torch.Tensor([lr]*n_params).to(device)
+    total_client = len(vectorize_nets)
+    local_updates = vectorize_nets - vectorize_avg_net
+    print(f"len freq: {len(freq)}")
+    print(f"local_updates.shape is: {len(local_updates)}")
+    fed_avg_updates_vector = np.average(local_updates, weights=freq, axis=0).astype(float32)
+    print(f"fed_avg_vector.shape is: {fed_avg_updates_vector.shape}")
+    # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
+    selected_net_indx = [i for i in range(total_client) if i not in attacker_idxs]
+    selected_freq = np.array(freq)[selected_net_indx]
+    selected_freq = [freq/sum(selected_freq) for freq in selected_freq]
+    
+    
+    agent_updates_sign = [np.sign(update) for update in local_updates]  
+    sm_of_signs = np.abs(sum(agent_updates_sign))
+    sm_of_signs[sm_of_signs < robustLR_threshold] = -lr
+    sm_of_signs[sm_of_signs >= robustLR_threshold] = lr
+    print(f"sm_of_signs is: {sm_of_signs}")
+    
+    lr_vector = sm_of_signs
+    poison_w_idxs = sm_of_signs < 0
+    # poison_w_idxs = poison_w_idxs*1
+    print(f"poison_w_idxs: {poison_w_idxs}")
+    print(f"lr_vector: {lr_vector}")
+    local_updates = np.asarray(local_updates)
+    print(f"local_updates.shape is: {local_updates.shape}")
+    # local_updates[attacker_idxs][poison_w_idxs] = 0
+    cnt = 0
+    sm_updates_2 = 0
+    # for _id, update in enumerate(local_updates):
+    #     if _id not in attacker_idxs:
+    #         sm_updates_2 += selected_freq[cnt]*update[poison_w_idxs]
+    #         cnt+=1
+    for _id, update in enumerate(local_updates):
+        if _id not in attacker_idxs:
+            sm_updates_2 += freq[_id]*update[poison_w_idxs]
+        else:
+            sm_updates_2 += freq[_id]*(-update[poison_w_idxs])
+            
+    print(f"sm_updates_2.shape is: {sm_updates_2.shape}")
+    fed_avg_updates_vector[poison_w_idxs] = sm_updates_2
+    new_global_params =  (vectorize_avg_net + lr*fed_avg_updates_vector).astype(np.float32)
+    return new_global_params
 class Defense:
     def __init__(self, *args, **kwargs):
         self.hyper_params = None
@@ -593,7 +638,7 @@ class KrMLRFL(Defense):
     we implement the robust aggregator at: https://papers.nips.cc/paper/6617-machine-learning-with-adversaries-byzantine-tolerant-gradient-descent.pdf
     and we integrate both krum and multi-krum in this single class
     """
-    def __init__(self, total_workers, num_workers, num_adv, num_valid = 1, *args, **kwargs):
+    def __init__(self, total_workers, num_workers, num_adv, lr, num_valid = 1, *args, **kwargs):
         # assert (mode in ("krum", "multi-krum"))
         self.num_valid = num_valid
         self.num_workers = num_workers
@@ -602,6 +647,7 @@ class KrMLRFL(Defense):
         self.accumulate_t_scores = {}
         self.pairwise_w = np.zeros((total_workers+1, total_workers+1))
         self.pairwise_b = np.zeros((total_workers+1, total_workers+1))
+        self.lr = lr
         
         # print(self.pairwise_cs.shape)
         logger.info("Starting performing KrMLRFL...")
@@ -625,6 +671,7 @@ class KrMLRFL(Defense):
     def exec(self, client_models, num_dps, net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, device, *args, **kwargs):
         from sklearn.cluster import KMeans
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        vectorize_net_avg = vectorize_net(net_avg).detach().cpu().numpy()
         trusted_models = []
         neighbor_distances = []
         bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight = extract_classifier_layer(client_models, pseudo_avg_net, net_avg)
@@ -665,16 +712,11 @@ class KrMLRFL(Defense):
                 
                 cli_i_arr = np.hstack((bias_p_i, w_p_i))
                 cli_j_arr = np.hstack((bias_p_j, w_p_j))
-                
-                
-                # cs_arr = np.hstack(cs_1, cs_2)
-                
-            #     if j > i:
-            #         distance.append(float(np.linalg.norm(cli_i_arr-cli_j_arr)**2)) # let's change this to pytorch version
-            # neighbor_distances.append(distance)
-                
-                # round_eu_pairwise[i][j] = 1.0 - sum_sq
+                if j > i:
+                    distance.append(float(np.linalg.norm(cli_i_arr-cli_j_arr)**2)) # let's change this to pytorch version
+            neighbor_distances.append(distance) 
         logger.info("Starting performing KrMLRFL...")
+            
         # for i, g_i in enumerate(vectorize_nets):
         #     distance = []
         #     for j in range(i+1, len(vectorize_nets)):
@@ -682,33 +724,6 @@ class KrMLRFL(Defense):
         #             g_j = vectorize_nets[j]
         #             distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
         #     neighbor_distances.append(distance)
-
-        # # compute scores by KRUM*
-        
-        # nb_in_score = self.num_workers-self.s-2
-        # scores = []
-        # for i, g_i in enumerate(vectorize_nets):
-        #     dists = []
-        #     for j, g_j in enumerate(vectorize_nets):
-        #         if j == i:
-        #             continue
-        #         if j < i:
-        #             dists.append(neighbor_distances[j][i - j - 1])
-        #         else:
-        #             dists.append(neighbor_distances[i][j - i - 1])
-        #     # alternative to topk in pytorch and tensorflow
-        #     topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
-        #     scores.append(sum(np.take(dists, topk_ind)))
-            
-        # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
-        # neighbor_distances = []
-        for i, g_i in enumerate(vectorize_nets):
-            distance = []
-            for j in range(i+1, len(vectorize_nets)):
-                if i != j:
-                    g_j = vectorize_nets[j]
-                    distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
-            neighbor_distances.append(distance)
 
         # compute scores
         nb_in_score = self.num_workers-self.s-2
@@ -761,8 +776,6 @@ class KrMLRFL(Defense):
         # From now on, trusted_models contain the index base models treated as valid users.
         raw_t_score = self.get_trustworthy_scores(glob_update, weight_update)
         t_score = []
-        # print(f"raw_t_score: {raw_t_score}")
-        # print(f"self.accumulate_t_scores: {self.accumulate_t_scores}")
         for idx, cli in enumerate(g_user_indices):
             # increase the frequency of the selected choosen clients
             self.choosing_frequencies[cli] = self.choosing_frequencies.get(cli, 0) + 1
@@ -772,7 +785,6 @@ class KrMLRFL(Defense):
         
         
         t_score = np.array(t_score)
-        # threshold = np.quantile(t_score, 0.5)
         threshold = min(0.5, np.median(t_score))
         
         
@@ -797,16 +809,13 @@ class KrMLRFL(Defense):
         # NOW CHECK FOR ROUND 50
         if round >= 1: 
             # TODO: find dynamic threshold
-            # print("[PAIRWISE] self.pairwise_cs.shape: ", self.pairwise_cs.shape)
             
             cummulative_w = self.pairwise_w[np.ix_(g_user_indices, g_user_indices)]
             cummulative_b = self.pairwise_b[np.ix_(g_user_indices, g_user_indices)]
             
             
             saved_pairwise_sim = np.hstack((cummulative_w, cummulative_b))
-            # print("saved_pairwise_sim.shape is: ", saved_pairwise_sim.shape)
             kmeans = KMeans(n_clusters = 2)
-            # kmeans.fit_predict(cummulative_cs)
             pred_labels = kmeans.fit_predict(saved_pairwise_sim)
             centroids = kmeans.cluster_centers_
             np_centroids = np.asarray(centroids)
@@ -819,7 +828,7 @@ class KrMLRFL(Defense):
             print(f"dist_0 is {dist_0}, dist_1 is {dist_1}")
             
             
-            print(f"centroids are: {np_centroids}")
+            # print(f"centroids are: {np_centroids}")
             print("pred_labels of combination is: ", pred_labels)
             print(f"trusted_index is {trusted_index}")
             print(f"g_trusted_index is {g_user_indices[trusted_index]}")
@@ -876,30 +885,30 @@ class KrMLRFL(Defense):
         neo_net_list = []
         neo_net_freq = []
         selected_net_indx = []
+        
         for idx, net in enumerate(client_models):
             if idx not in final_attacker_idxs:
                 neo_net_list.append(net)
                 neo_net_freq.append(1.0)
                 selected_net_indx.append(idx)
         if len(neo_net_list) == 0:
-            neo_net_list.append(client_models[i_star])
-            selected_net_indx.append(i_star)
-            pred_g_attacker = [g_user_indices[i] for i in final_attacker_idxs]
-            # return [client_models[i_star]], [1.0], pred_g_attacker
-            return [net_avg], [1.0], pred_g_attacker
             
-        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
-        selected_num_dps = np.array(num_dps)[selected_net_indx]
+            pred_g_attacker = [g_user_indices[i] for i in final_attacker_idxs]
+            return [net_avg], [1.0], pred_g_attacker
+        # if 
+        # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
+        selected_num_dps = np.array(num_dps)
         reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
 
         logger.info("Num data points: {}".format(num_dps))
         logger.info("Num selected data points: {}".format(selected_num_dps))
-        logger.info("The chosen ones are users: {}, which are global users: {}".format(selected_net_indx, [g_user_indices[ti] for ti in selected_net_indx]))
-        
-        aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
+        # logger.info("The chosen ones are users: {}, which are global users: {}".format(selected_net_indx, [g_user_indices[ti] for ti in selected_net_indx]))
+        n_params = vectorize_net_avg.shape[0]
+        rlr_avg_net = rlr_avg(vectorize_nets, vectorize_net_avg, reconstructed_freq, final_attacker_idxs, self.lr, n_params, device) 
+        # aggregated_grad = np.average(vectorize_nets, weights=reconstructed_freq, axis=0).astype(np.float32)
 
         aggregated_model = client_models[0] # slicing which doesn't really matter
-        load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
+        load_model_weight(aggregated_model, torch.from_numpy(rlr_avg_net).to(device))
         pred_g_attacker = [g_user_indices[i] for i in final_attacker_idxs]
         # print(self.pairwise_cs)
         neo_net_list = [aggregated_model]
@@ -907,7 +916,6 @@ class KrMLRFL(Defense):
         return neo_net_list, neo_net_freq, pred_g_attacker
 
     def get_trustworthy_scores(self, global_update, weight_update):
-        # print("base_model_update: ", base_model_update)
         cs_dist = get_cs_on_base_net(weight_update, global_update)
         score = np.array(cs_dist)
         # print("score_avg:= ", score_avg)
@@ -984,11 +992,6 @@ class RLR(Defense):
         neo_net_list = [aggregated_model]
         neo_net_freq = [1.0]
         return neo_net_list, neo_net_freq
-        
-        
-        # some plotting stuff if desired
-        # self.plot_sign_agreement(lr_vector, cur_global_params, new_global_params, cur_round)
-        # self.plot_norms(agent_updates_dict, cur_round)
      
     
     def compute_robustLR(self, agent_updates):
@@ -1136,6 +1139,7 @@ class RLR(Defense):
         self.cum_net_mov += (net_hon - net_adv)
         self.writer.add_scalar(f'Sign/Model_Net_L2_Cumulative', self.cum_net_mov, cur_round)
         return
+
     
 if __name__ == "__main__":
     # some tests here
