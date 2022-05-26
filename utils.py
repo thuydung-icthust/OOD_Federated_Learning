@@ -397,6 +397,7 @@ def load_poisoned_dataset(args):
         with open("poisoned_dataset_fraction_{}".format(fraction), "rb") as saved_data_file:
             poisoned_dataset = torch.load(saved_data_file)
         num_dps_poisoned_dataset = poisoned_dataset.data.shape[0]
+        print(f"num_dps_poisoned_dataset: {num_dps_poisoned_dataset}")
         
         # prepare fashionMNIST dataset
         fashion_mnist_train_dataset = datasets.FashionMNIST('./data', train=True, download=True,
@@ -436,7 +437,32 @@ def load_poisoned_dataset(args):
 
             targetted_task_test_loader = torch.utils.data.DataLoader(ardis_test_dataset,
                  batch_size=args.test_batch_size, shuffle=False, **kwargs)
-
+                    # fig = plt.figure(figsize = (10, 5))
+                    
+        clean_trainset = copy.deepcopy(poisoned_dataset)
+        ########################################################
+        # benign_train_data_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
+        print("clean data target: ", poisoned_dataset.targets)
+        print("clean data target's shape: ", poisoned_dataset.targets.shape)
+        labels_clean_set = poisoned_dataset.targets
+        unique, counts = np.unique(labels_clean_set, return_counts=True)
+        cnt_clean_label = dict(zip(unique, counts))
+        cnt_clean_label["ardis"] = 100
+        print(cnt_clean_label)
+        # df = pd.DataFrame(cnt_clean_label)
+        # print(df)
+        labs = list(cnt_clean_label.keys())
+        labs = list(map(str, labs))
+        cnts = list(cnt_clean_label.values())
+        print("labs: ", labs)    
+        # creating the bar plot
+        barlist = plt.bar(labs, cnts, color ='maroon')
+        barlist[-1].set_color('b')
+        
+        plt.xlabel("Label distribution")
+        plt.ylabel("No. of sample per label")
+        plt.title("Poison client data's distribution")
+        plt.savefig("emnist_distribution_label.png")
     
     elif args.dataset == "cifar10":
         if args.poison_type == "southwest":
@@ -1202,6 +1228,7 @@ def get_distance_on_avg_net(weight_list, avg_weight, weight_update, total_cli = 
 
 def get_cs_on_base_net(weight_update, avg_weight, total_cli = 10):
     cs_list = []
+    total_cli = len(weight_update)
     for i in range(total_cli):
         point = weight_update[i].flatten()
         # print("point: ", point)
@@ -1212,6 +1239,7 @@ def get_cs_on_base_net(weight_update, avg_weight, total_cli = 10):
 
 def get_ed_on_base_net(weight_update, avg_weight, total_cli = 10):
     ed_list = []
+    total_cli = len(weight_update)
     for i in range(total_cli):
         point = weight_update[i].flatten().reshape(-1,1)
         base_p = avg_weight.flatten().reshape(-1,1)

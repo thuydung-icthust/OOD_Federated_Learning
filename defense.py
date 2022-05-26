@@ -47,13 +47,13 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     avg_weight = None
     prev_avg_bias = None
     prev_avg_weight = None
-    for idx, param in enumerate(global_avg_net.classifier.parameters()):
+    for idx, param in enumerate(global_avg_net.fc2.parameters()):
         if idx:
             avg_bias = param.data.cpu().numpy()
         else:
             avg_weight = param.data.cpu().numpy()
 
-    for idx, param in enumerate(prev_net.classifier.parameters()):
+    for idx, param in enumerate(prev_net.fc2.parameters()):
         if idx:
             prev_avg_bias = param.data.cpu().numpy()
         else:
@@ -62,7 +62,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     for net in net_list:
         bias = None
         weight = None
-        for idx, param in enumerate(net.classifier.parameters()):
+        for idx, param in enumerate(net.fc2.parameters()):
             if idx:
                 bias = param.data.cpu().numpy()
             else:
@@ -623,7 +623,7 @@ class KrMLRFL(Defense):
             writer.writeheader()
         
 
-    def exec(self, client_models, num_dps,net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, device, *args, **kwargs):
+    def exec(self, client_models, num_dps, net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, device, *args, **kwargs):
         from sklearn.cluster import KMeans
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
         trusted_models = []
@@ -670,9 +670,9 @@ class KrMLRFL(Defense):
                 
                 # cs_arr = np.hstack(cs_1, cs_2)
                 
-                if j > i:
-                    distance.append(float(np.linalg.norm(cli_i_arr-cli_j_arr)**2)) # let's change this to pytorch version
-            neighbor_distances.append(distance)
+            #     if j > i:
+            #         distance.append(float(np.linalg.norm(cli_i_arr-cli_j_arr)**2)) # let's change this to pytorch version
+            # neighbor_distances.append(distance)
                 
                 # round_eu_pairwise[i][j] = 1.0 - sum_sq
         logger.info("Starting performing KrMLRFL...")
@@ -684,8 +684,34 @@ class KrMLRFL(Defense):
         #             distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
         #     neighbor_distances.append(distance)
 
-        # compute scores
+        # # compute scores by KRUM*
         
+        # nb_in_score = self.num_workers-self.s-2
+        # scores = []
+        # for i, g_i in enumerate(vectorize_nets):
+        #     dists = []
+        #     for j, g_j in enumerate(vectorize_nets):
+        #         if j == i:
+        #             continue
+        #         if j < i:
+        #             dists.append(neighbor_distances[j][i - j - 1])
+        #         else:
+        #             dists.append(neighbor_distances[i][j - i - 1])
+        #     # alternative to topk in pytorch and tensorflow
+        #     topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
+        #     scores.append(sum(np.take(dists, topk_ind)))
+            
+        # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        # neighbor_distances = []
+        for i, g_i in enumerate(vectorize_nets):
+            distance = []
+            for j in range(i+1, len(vectorize_nets)):
+                if i != j:
+                    g_j = vectorize_nets[j]
+                    distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
+            neighbor_distances.append(distance)
+
+        # compute scores
         nb_in_score = self.num_workers-self.s-2
         scores = []
         for i, g_i in enumerate(vectorize_nets):
@@ -697,9 +723,12 @@ class KrMLRFL(Defense):
                     dists.append(neighbor_distances[j][i - j - 1])
                 else:
                     dists.append(neighbor_distances[i][j - i - 1])
+
             # alternative to topk in pytorch and tensorflow
             topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
             scores.append(sum(np.take(dists, topk_ind)))
+        
+        i_star = scores.index(min(scores))
         
         # use krum as the baseline to improve, mark the one chosen by krum as trusted
         if self.num_valid == 1:
@@ -733,6 +762,8 @@ class KrMLRFL(Defense):
         # From now on, trusted_models contain the index base models treated as valid users.
         raw_t_score = self.get_trustworthy_scores(glob_update, weight_update)
         t_score = []
+        # print(f"raw_t_score: {raw_t_score}")
+        # print(f"self.accumulate_t_scores: {self.accumulate_t_scores}")
         for idx, cli in enumerate(g_user_indices):
             # increase the frequency of the selected choosen clients
             self.choosing_frequencies[cli] = self.choosing_frequencies.get(cli, 0) + 1
@@ -778,6 +809,18 @@ class KrMLRFL(Defense):
             kmeans = KMeans(n_clusters = 2)
             # kmeans.fit_predict(cummulative_cs)
             pred_labels = kmeans.fit_predict(saved_pairwise_sim)
+            centroids = kmeans.cluster_centers_
+            np_centroids = np.asarray(centroids)
+            
+            
+            cls_0_idxs = np.argwhere(np.asarray(pred_labels) == 0).flatten()
+            cls_1_idxs = np.argwhere(np.asarray(pred_labels) == 1).flatten()
+            dist_0 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_0_idxs]-np_centroids[0])))/len(cls_0_idxs)
+            dist_1 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_1_idxs]-np_centroids[1])))/len(cls_1_idxs)
+            print(f"dist_0 is {dist_0}, dist_1 is {dist_1}")
+            
+            
+            print(f"centroids are: {np_centroids}")
             print("pred_labels of combination is: ", pred_labels)
             print(f"trusted_index is {trusted_index}")
             print(f"g_trusted_index is {g_user_indices[trusted_index]}")
@@ -893,6 +936,207 @@ class KrMLRFL(Defense):
         hb_clusterer.fit(stack_dis)
         print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
         return temp_score
+
+class RLR(Defense):
+    def __init__(self, n_params, device, args, agent_data_sizes=[], writer=None, robustLR_threshold = 0, aggr="avg", poisoned_val_loader=None):
+        self.agent_data_sizes = agent_data_sizes
+        self.args = args
+        self.writer = writer
+        # print(f"args: {args}")
+        # self.server_lr = args.server_lr
+        self.n_params = n_params
+        self.poisoned_val_loader = None
+        self.cum_net_mov = 0
+        self.device = device
+        self.robustLR_threshold = robustLR_threshold
+        
+         
+    def exec(self, global_model, client_models, num_dps, agent_updates_dict=None, cur_round=0):
+        # adjust LR if robust LR is selected
+        print(f"self.args: {self.args}")
+        print(f"self.args['server_lr']: {self.args['server_lr']}")
+        lr_vector = torch.Tensor([self.args['server_lr']]*self.n_params).to(self.device)
+        vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
+        vectorize_avg_net = vectorize_net(global_model).detach().cpu().numpy()
+        local_updates = vectorize_nets - vectorize_avg_net
+        aggr_freq = [num_dp/sum(num_dps) for num_dp in num_dps]
+        
+        if self.robustLR_threshold > 0:
+            lr_vector = self.compute_robustLR(local_updates)
+        
+        
+        aggregated_updates = 0
+        if self.args['aggr']=='avg':          
+            aggregated_updates = self.agg_avg(local_updates, num_dps)
+        elif self.args['aggr']=='comed':
+            #TODO update for the 2 remaining func
+            aggregated_updates = self.agg_comed(local_updates)
+        elif self.args['aggr'] == 'sign':
+            aggregated_updates = self.agg_sign(local_updates)
+            
+        if self.args['noise'] > 0:
+            aggregated_updates.add_(torch.normal(mean=0, std=self.args['noise']*self.args['clip'], size=(self.n_params,)).to(self.device))
+
+        cur_global_params = vectorize_avg_net
+        new_global_params =  (cur_global_params + lr_vector*aggregated_updates).astype(np.float32)
+        
+        aggregated_model = client_models[0] # slicing which doesn't really matter
+        load_model_weight(aggregated_model, torch.from_numpy(new_global_params).to(self.device))
+        neo_net_list = [aggregated_model]
+        neo_net_freq = [1.0]
+        return neo_net_list, neo_net_freq
+        
+        
+        # some plotting stuff if desired
+        # self.plot_sign_agreement(lr_vector, cur_global_params, new_global_params, cur_round)
+        # self.plot_norms(agent_updates_dict, cur_round)
+     
+    
+    def compute_robustLR(self, agent_updates):
+        agent_updates_sign = [np.sign(update) for update in agent_updates]  
+        sm_of_signs = np.abs(sum(agent_updates_sign))
+        print(f"sm_of_signs is: {sm_of_signs}")
+        
+        sm_of_signs[sm_of_signs < self.robustLR_threshold] = -self.args['server_lr']
+        sm_of_signs[sm_of_signs >= self.robustLR_threshold] = self.args['server_lr']                                            
+        return sm_of_signs
+        
+            
+    def agg_avg(self, agent_updates_dict, num_dps):
+        """ classic fed avg """
+        sm_updates, total_data = 0, 0
+        for _id, update in enumerate(agent_updates_dict):
+            n_agent_data = num_dps[_id]
+            sm_updates +=  n_agent_data * update
+            total_data += n_agent_data  
+        return  sm_updates / total_data
+    
+    def agg_comed(self, agent_updates_dict):
+        agent_updates_col_vector = [update.view(-1, 1) for update in agent_updates_dict.values()]
+        concat_col_vectors = torch.cat(agent_updates_col_vector, dim=1)
+        return torch.median(concat_col_vectors, dim=1).values
+    
+    def agg_sign(self, agent_updates_dict):
+        """ aggregated majority sign update """
+        agent_updates_sign = [torch.sign(update) for update in agent_updates_dict.values()]
+        sm_signs = torch.sign(sum(agent_updates_sign))
+        return torch.sign(sm_signs)
+
+    def clip_updates(self, agent_updates_dict):
+        for update in agent_updates_dict.values():
+            l2_update = torch.norm(update, p=2) 
+            update.div_(max(1, l2_update/self.args['clip']))
+        return
+                  
+    def plot_norms(self, agent_updates_dict, cur_round, norm=2):
+        """ Plotting average norm information for honest/corrupt updates """
+        honest_updates, corrupt_updates = [], []
+        for key in agent_updates_dict.keys():
+            if key < self.args.num_corrupt:
+                corrupt_updates.append(agent_updates_dict[key])
+            else:
+                honest_updates.append(agent_updates_dict[key])
+                              
+        l2_honest_updates = [torch.norm(update, p=norm) for update in honest_updates]
+        avg_l2_honest_updates = sum(l2_honest_updates) / len(l2_honest_updates)
+        self.writer.add_scalar(f'Norms/Avg_Honest_L{norm}', avg_l2_honest_updates, cur_round)
+        
+        if len(corrupt_updates) > 0:
+            l2_corrupt_updates = [torch.norm(update, p=norm) for update in corrupt_updates]
+            avg_l2_corrupt_updates = sum(l2_corrupt_updates) / len(l2_corrupt_updates)
+            self.writer.add_scalar(f'Norms/Avg_Corrupt_L{norm}', avg_l2_corrupt_updates, cur_round) 
+        return
+        
+    def comp_diag_fisher(self, model_params, data_loader, adv=True):
+
+        model = models.get_model(self.args.data)
+        vector_to_parameters(model_params, model.parameters())
+        params = {n: p for n, p in model.named_parameters() if p.requires_grad}
+        precision_matrices = {}
+        for n, p in deepcopy(params).items():
+            p.data.zero_()
+            precision_matrices[n] = p.data
+            
+        model.eval()
+        for _, (inputs, labels) in enumerate(data_loader):
+            model.zero_grad()
+            inputs, labels = inputs.to(device=self.args.device, non_blocking=True),\
+                                    labels.to(device=self.args.device, non_blocking=True).view(-1, 1)
+            if not adv:
+                labels.fill_(self.args.base_class)
+                
+            outputs = model(inputs)
+            log_all_probs = F.log_softmax(outputs, dim=1)
+            target_log_probs = outputs.gather(1, labels)
+            batch_target_log_probs = target_log_probs.sum()
+            batch_target_log_probs.backward()
+            
+            for n, p in model.named_parameters():
+                precision_matrices[n].data += (p.grad.data ** 2) / len(data_loader.dataset)
+                
+        return parameters_to_vector(precision_matrices.values()).detach()
+
+        
+    def plot_sign_agreement(self, robustLR, cur_global_params, new_global_params, cur_round):
+        """ Getting sign agreement of updates between honest and corrupt agents """
+        # total update for this round
+        update = new_global_params - cur_global_params
+        
+        # compute FIM to quantify these parameters: (i) parameters which induces adversarial mapping on trojaned, (ii) parameters which induces correct mapping on trojaned
+        fisher_adv = self.comp_diag_fisher(cur_global_params, self.poisoned_val_loader)
+        fisher_hon = self.comp_diag_fisher(cur_global_params, self.poisoned_val_loader, adv=False)
+        _, adv_idxs = fisher_adv.sort()
+        _, hon_idxs = fisher_hon.sort()
+        
+        # get most important n_idxs params
+        n_idxs = self.args.top_frac #math.floor(self.n_params*self.args.top_frac)
+        adv_top_idxs = adv_idxs[-n_idxs:].cpu().detach().numpy()
+        hon_top_idxs = hon_idxs[-n_idxs:].cpu().detach().numpy()
+        
+        # minimized and maximized indexes
+        min_idxs = (robustLR == -self.args.server_lr).nonzero().cpu().detach().numpy()
+        max_idxs = (robustLR == self.args.server_lr).nonzero().cpu().detach().numpy()
+        
+        # get minimized and maximized idxs for adversary and honest
+        max_adv_idxs = np.intersect1d(adv_top_idxs, max_idxs)
+        max_hon_idxs = np.intersect1d(hon_top_idxs, max_idxs)
+        min_adv_idxs = np.intersect1d(adv_top_idxs, min_idxs)
+        min_hon_idxs = np.intersect1d(hon_top_idxs, min_idxs)
+       
+        # get differences
+        max_adv_only_idxs = np.setdiff1d(max_adv_idxs, max_hon_idxs)
+        max_hon_only_idxs = np.setdiff1d(max_hon_idxs, max_adv_idxs)
+        min_adv_only_idxs = np.setdiff1d(min_adv_idxs, min_hon_idxs)
+        min_hon_only_idxs = np.setdiff1d(min_hon_idxs, min_adv_idxs)
+        
+        # get actual update values and compute L2 norm
+        max_adv_only_upd = update[max_adv_only_idxs] # S1
+        max_hon_only_upd = update[max_hon_only_idxs] # S2
+        
+        min_adv_only_upd = update[min_adv_only_idxs] # S3
+        min_hon_only_upd = update[min_hon_only_idxs] # S4
+
+
+        #log l2 of updates
+        max_adv_only_upd_l2 = torch.norm(max_adv_only_upd).item()
+        max_hon_only_upd_l2 = torch.norm(max_hon_only_upd).item()
+        min_adv_only_upd_l2 = torch.norm(min_adv_only_upd).item()
+        min_hon_only_upd_l2 = torch.norm(min_hon_only_upd).item()
+       
+        self.writer.add_scalar(f'Sign/Hon_Maxim_L2', max_hon_only_upd_l2, cur_round)
+        self.writer.add_scalar(f'Sign/Adv_Maxim_L2', max_adv_only_upd_l2, cur_round)
+        self.writer.add_scalar(f'Sign/Adv_Minim_L2', min_adv_only_upd_l2, cur_round)
+        self.writer.add_scalar(f'Sign/Hon_Minim_L2', min_hon_only_upd_l2, cur_round)
+        
+        
+        net_adv =  max_adv_only_upd_l2 - min_adv_only_upd_l2
+        net_hon =  max_hon_only_upd_l2 - min_hon_only_upd_l2
+        self.writer.add_scalar(f'Sign/Adv_Net_L2', net_adv, cur_round)
+        self.writer.add_scalar(f'Sign/Hon_Net_L2', net_hon, cur_round)
+        
+        self.cum_net_mov += (net_hon - net_adv)
+        self.writer.add_scalar(f'Sign/Model_Net_L2_Cumulative', self.cum_net_mov, cur_round)
+        return
     
 if __name__ == "__main__":
     # some tests here
