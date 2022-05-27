@@ -47,13 +47,13 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     avg_weight = None
     prev_avg_bias = None
     prev_avg_weight = None
-    for idx, param in enumerate(global_avg_net.fc2.parameters()):
+    for idx, param in enumerate(global_avg_net.classifier.parameters()):
         if idx:
             avg_bias = param.data.cpu().numpy()
         else:
             avg_weight = param.data.cpu().numpy()
 
-    for idx, param in enumerate(prev_net.fc2.parameters()):
+    for idx, param in enumerate(prev_net.classifier.parameters()):
         if idx:
             prev_avg_bias = param.data.cpu().numpy()
         else:
@@ -62,7 +62,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net):
     for net in net_list:
         bias = None
         weight = None
-        for idx, param in enumerate(net.fc2.parameters()):
+        for idx, param in enumerate(net.classifier.parameters()):
             if idx:
                 bias = param.data.cpu().numpy()
             else:
@@ -676,33 +676,9 @@ class KrMLRFL(Defense):
                 
                 # round_eu_pairwise[i][j] = 1.0 - sum_sq
         logger.info("Starting performing KrMLRFL...")
-        # for i, g_i in enumerate(vectorize_nets):
-        #     distance = []
-        #     for j in range(i+1, len(vectorize_nets)):
-        #         if i != j:
-        #             g_j = vectorize_nets[j]
-        #             distance.append(float(np.linalg.norm(g_i-g_j)**2)) # let's change this to pytorch version
-        #     neighbor_distances.append(distance)
 
         # # compute scores by KRUM*
         
-        # nb_in_score = self.num_workers-self.s-2
-        # scores = []
-        # for i, g_i in enumerate(vectorize_nets):
-        #     dists = []
-        #     for j, g_j in enumerate(vectorize_nets):
-        #         if j == i:
-        #             continue
-        #         if j < i:
-        #             dists.append(neighbor_distances[j][i - j - 1])
-        #         else:
-        #             dists.append(neighbor_distances[i][j - i - 1])
-        #     # alternative to topk in pytorch and tensorflow
-        #     topk_ind = np.argpartition(dists, nb_in_score)[:nb_in_score]
-        #     scores.append(sum(np.take(dists, topk_ind)))
-            
-        # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
-        # neighbor_distances = []
         for i, g_i in enumerate(vectorize_nets):
             distance = []
             for j in range(i+1, len(vectorize_nets)):
@@ -762,8 +738,6 @@ class KrMLRFL(Defense):
         # From now on, trusted_models contain the index base models treated as valid users.
         raw_t_score = self.get_trustworthy_scores(glob_update, weight_update)
         t_score = []
-        # print(f"raw_t_score: {raw_t_score}")
-        # print(f"self.accumulate_t_scores: {self.accumulate_t_scores}")
         for idx, cli in enumerate(g_user_indices):
             # increase the frequency of the selected choosen clients
             self.choosing_frequencies[cli] = self.choosing_frequencies.get(cli, 0) + 1
