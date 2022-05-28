@@ -480,6 +480,7 @@ def load_poisoned_dataset(args):
             trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
 
             poisoned_trainset = copy.deepcopy(trainset)
+            poisoned_trainset_2 = copy.deepcopy(trainset)
 
             if args.attack_case == "edge-case":
                 with open('./saved_datasets/southwest_images_new_train.pkl', 'rb') as train_f:
@@ -513,8 +514,16 @@ def load_poisoned_dataset(args):
                 samped_poisoned_data_indices = np.random.choice(saved_southwest_dataset_train.shape[0],
                                                                 num_sampled_poisoned_data_points,
                                                                 replace=False)
+                samped_poisoned_data_indices_2 = np.random.choice(saved_southwest_dataset_train.shape[0],
+                                                                100,
+                                                                replace=False)
+                print(f"samped_poisoned_data_indices_2: {samped_poisoned_data_indices_2}")
+                print(f"samped_poisoned_data_indices: {samped_poisoned_data_indices}")
                 saved_southwest_dataset_train = saved_southwest_dataset_train[samped_poisoned_data_indices, :, :, :]
                 sampled_targets_array_train = np.array(sampled_targets_array_train)[samped_poisoned_data_indices]
+                
+                saved_southwest_dataset_train_2 = saved_southwest_dataset_train[samped_poisoned_data_indices_2, :, :, :]
+                sampled_targets_array_train_2 = np.array(sampled_targets_array_train)[samped_poisoned_data_indices_2]
                 logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset: {}".format(num_sampled_poisoned_data_points))
             elif args.attack_case == "normal-case" or args.attack_case == "almost-edge-case":
                 num_sampled_poisoned_data_points = 100 # N
@@ -529,6 +538,11 @@ def load_poisoned_dataset(args):
             samped_data_indices = np.random.choice(poisoned_trainset.data.shape[0], num_sampled_data_points, replace=False)
             poisoned_trainset.data = poisoned_trainset.data[samped_data_indices, :, :, :]
             poisoned_trainset.targets = np.array(poisoned_trainset.targets)[samped_data_indices]
+            
+            samped_data_indices_2 = np.random.choice(poisoned_trainset_2.data.shape[0], 300, replace=False)
+            poisoned_trainset_2.data = poisoned_trainset_2.data[samped_data_indices, :, :, :]
+            poisoned_trainset_2.targets = np.array(poisoned_trainset_2.targets)[samped_data_indices]
+            
             logger.info("!!!!!!!!!!!Num clean data points in the mixed dataset: {}".format(num_sampled_data_points))
             # keep a copy of clean data
             clean_trainset = copy.deepcopy(poisoned_trainset)
