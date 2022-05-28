@@ -137,7 +137,7 @@ if __name__ == "__main__":
     adversarial_local_training_period = 5
 
     # load poisoned dataset:
-    poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset(args=args)
+    poisoned_train_loader, poisoned_train_loader_2, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, num_dps_poisoned_dataset_2, clean_train_loader = load_poisoned_dataset(args=args)
     # READ_CKPT = False
     if READ_CKPT:
         if args.model == "lenet":
@@ -272,7 +272,9 @@ if __name__ == "__main__":
             "args_lr":args.lr,
             "args_gamma":args.gamma,
             "num_dps_poisoned_dataset":num_dps_poisoned_dataset,
+            "num_dps_poisoned_dataset_2":num_dps_poisoned_dataset_2,
             "poisoned_emnist_train_loader":poisoned_train_loader,
+            "poisoned_emnist_train_loader_2":poisoned_train_loader_2,
             "clean_train_loader":clean_train_loader,
             "vanilla_emnist_test_loader":vanilla_test_loader,
             "targetted_task_test_loader":targetted_task_test_loader,

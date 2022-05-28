@@ -514,16 +514,19 @@ def load_poisoned_dataset(args):
                 samped_poisoned_data_indices = np.random.choice(saved_southwest_dataset_train.shape[0],
                                                                 num_sampled_poisoned_data_points,
                                                                 replace=False)
+                # np.random.seed(0)
                 samped_poisoned_data_indices_2 = np.random.choice(saved_southwest_dataset_train.shape[0],
                                                                 100,
                                                                 replace=False)
                 print(f"samped_poisoned_data_indices_2: {samped_poisoned_data_indices_2}")
                 print(f"samped_poisoned_data_indices: {samped_poisoned_data_indices}")
+                original_southwest_dataset_train = copy.deepcopy(saved_southwest_dataset_train)
+                original_sampled_targets_array_train = copy.deepcopy(sampled_targets_array_train)
                 saved_southwest_dataset_train = saved_southwest_dataset_train[samped_poisoned_data_indices, :, :, :]
                 sampled_targets_array_train = np.array(sampled_targets_array_train)[samped_poisoned_data_indices]
                 
-                saved_southwest_dataset_train_2 = saved_southwest_dataset_train[samped_poisoned_data_indices_2, :, :, :]
-                sampled_targets_array_train_2 = np.array(sampled_targets_array_train)[samped_poisoned_data_indices_2]
+                saved_southwest_dataset_train_2 = original_southwest_dataset_train[samped_poisoned_data_indices_2, :, :, :]
+                sampled_targets_array_train_2 = np.array(original_sampled_targets_array_train)[samped_poisoned_data_indices_2]
                 logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset: {}".format(num_sampled_poisoned_data_points))
             elif args.attack_case == "normal-case" or args.attack_case == "almost-edge-case":
                 num_sampled_poisoned_data_points = 100 # N
@@ -539,9 +542,9 @@ def load_poisoned_dataset(args):
             poisoned_trainset.data = poisoned_trainset.data[samped_data_indices, :, :, :]
             poisoned_trainset.targets = np.array(poisoned_trainset.targets)[samped_data_indices]
             
-            samped_data_indices_2 = np.random.choice(poisoned_trainset_2.data.shape[0], 300, replace=False)
-            poisoned_trainset_2.data = poisoned_trainset_2.data[samped_data_indices, :, :, :]
-            poisoned_trainset_2.targets = np.array(poisoned_trainset_2.targets)[samped_data_indices]
+            samped_data_indices_2 = np.random.choice(poisoned_trainset_2.data.shape[0], 200, replace=False)
+            poisoned_trainset_2.data = poisoned_trainset_2.data[samped_data_indices_2, :, :, :]
+            poisoned_trainset_2.targets = np.array(poisoned_trainset_2.targets)[samped_data_indices_2]
             
             logger.info("!!!!!!!!!!!Num clean data points in the mixed dataset: {}".format(num_sampled_data_points))
             # keep a copy of clean data
@@ -550,18 +553,37 @@ def load_poisoned_dataset(args):
             # benign_train_data_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
             print("clean data target: ", poisoned_trainset.targets)
             print("clean data target's shape: ", poisoned_trainset.targets.shape)
+            print("clean data target 2: ", poisoned_trainset_2.targets)
+            print("clean data target's shape 2: ", poisoned_trainset_2.targets.shape)
             labels_clean_set = poisoned_trainset.targets
             unique, counts = np.unique(labels_clean_set, return_counts=True)
             cnt_clean_label = dict(zip(unique, counts))
             cnt_clean_label["southwest"] = 200
             print(cnt_clean_label)
-            # df = pd.DataFrame(cnt_clean_label)
-            # print(df)
             labs= list(cnt_clean_label.keys())
             labs = list(map(str, labs))
             cnts = list(cnt_clean_label.values())
-            print("labs: ", labs)
-            print("cnts: ", cnts)
+            
+            labels_clean_set_2 = poisoned_trainset_2.targets
+            unique_2, counts_2 = np.unique(labels_clean_set_2, return_counts=True)
+            cnt_clean_label_2 = dict(zip(unique_2, counts_2))
+            cnt_clean_label_2["southwest"] = 100
+            print(cnt_clean_label_2)
+            labs_2 = list(cnt_clean_label_2.keys())
+            labs_2 = list(map(str, labs))
+            cnts_2 = list(cnt_clean_label_2.values())
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,6))
+            fig.suptitle('Attackers\'s data distribution.')
+            ax1.bar(labs, cnts, color ='maroon')
+            ax1.set_title("Group 1")
+            ax2.bar(labs_2, cnts_2, color='maroon')
+            ax2.set_title("Group 2")
+            
+            fig.savefig('client_attackers_distribution.png')
+            
+            # print("labs: ", labs)
+            # print("cnts: ", cnts)
             # fig = plt.figure(figsize = (10, 5))
             
             # # creating the bar plot
@@ -574,15 +596,24 @@ def load_poisoned_dataset(args):
             
             poisoned_trainset.data = np.append(poisoned_trainset.data, saved_southwest_dataset_train, axis=0)
             poisoned_trainset.targets = np.append(poisoned_trainset.targets, sampled_targets_array_train, axis=0)
+            
+            poisoned_trainset_2.data = np.append(poisoned_trainset_2.data, saved_southwest_dataset_train_2, axis=0)
+            poisoned_trainset_2.targets = np.append(poisoned_trainset_2.targets, sampled_targets_array_train_2, axis=0)
 
             logger.info("{}".format(poisoned_trainset.data.shape))
             logger.info("{}".format(poisoned_trainset.targets.shape))
             logger.info("{}".format(sum(poisoned_trainset.targets)))
+            
+            logger.info("{}".format(poisoned_trainset_2.data.shape))
+            logger.info("{}".format(poisoned_trainset_2.targets.shape))
+            logger.info("{}".format(sum(poisoned_trainset_2.targets)))
 
 
             #poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
             #trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
             poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True)
+            poisoned_train_loader_2 = torch.utils.data.DataLoader(poisoned_trainset_2, batch_size=args.batch_size, shuffle=True)
+            
             trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True)
             clean_train_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
 
@@ -598,6 +629,8 @@ def load_poisoned_dataset(args):
             targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
 
             num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
+            num_dps_poisoned_dataset_2 = poisoned_trainset_2.data.shape[0]
+            
 
         elif args.poison_type == "southwest-da":
             # transform_train = transforms.Compose([
@@ -872,7 +905,7 @@ def load_poisoned_dataset(args):
             targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
             num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
 
-    return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
+    return poisoned_train_loader, poisoned_train_loader_2, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, num_dps_poisoned_dataset_2, clean_train_loader
 
 
 def load_poisoned_dataset_test(idxs, batch_size, dataset="cifar10", poison_type="southwest"):

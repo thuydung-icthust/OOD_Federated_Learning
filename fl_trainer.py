@@ -688,6 +688,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.args_gamma = arguments['args_gamma']
         self.attacker_pool_size = arguments['attacker_pool_size']
         self.poisoned_emnist_train_loader = arguments['poisoned_emnist_train_loader']
+        self.poisoned_emnist_train_loader_2 = arguments['poisoned_emnist_train_loader_2']
         self.clean_train_loader = arguments['clean_train_loader']
         self.vanilla_emnist_test_loader = arguments['vanilla_emnist_test_loader']
         self.targetted_task_test_loader = arguments['targetted_task_test_loader']
@@ -698,6 +699,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.dataset = arguments["dataset"]
         self.model = arguments["model"]
         self.num_dps_poisoned_dataset = arguments['num_dps_poisoned_dataset']
+        self.num_dps_poisoned_dataset_2 = arguments['num_dps_poisoned_dataset_2']
         self.defense_technique = arguments["defense_technique"]
         self.norm_bound = arguments["norm_bound"]
         self.attack_method = arguments["attack_method"]
@@ -776,7 +778,9 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
         # self.__attacker_pool = np.random.choice(self.num_nets, self.attacker_pool_size, replace=False)
         self.__attacker_pool = np.random.choice(self.num_nets, int(self.num_nets*self.attacker_percent), replace=False)
-
+        attackers_pool_1_idxs = np.random.choice(len( self.__attacker_pool), int(self.num_nets*self.attacker_percent/2), replace=False)
+        self.__attacker_pool_1 = self.__attacker_pool[attackers_pool_1_idxs] # with distribution 1
+        self.__attacker_pool_2 = self.__attacker_pool[~attackers_pool_1_idxs] # with distribution 2
     def run(self, wandb_ins=None):
         main_task_acc = []
         raw_task_acc = []
@@ -805,12 +809,17 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 selected_node_indices = np.random.choice(self.num_nets, size=self.part_nets_per_round, replace=False)
 
             selected_attackers = [idx for idx in selected_node_indices if idx in self.__attacker_pool]
+            selected_attackers_1 = [idx for idx in selected_node_indices if idx in self.__attacker_pool_1]
+            selected_attackers_2 = [idx for idx in selected_node_indices if idx in self.__attacker_pool_2]
+            
             selected_honest_users = [idx for idx in selected_node_indices if idx not in self.__attacker_pool]
             logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
             num_data_points = []
             for sni in selected_node_indices:
-                if sni in selected_attackers:
+                if sni in selected_attackers_1:
                     num_data_points.append(self.num_dps_poisoned_dataset)
+                elif sni in selected_attackers_2:
+                    num_data_points.append(self.num_dps_poisoned_dataset_2)
                 else:
                     num_data_points.append(len(self.net_dataidx_map[sni]))
 
@@ -884,7 +893,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                     # test(net, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
                     # # at here we can check the distance between w_bad and w_g i.e. `\|w_bad - w_g\|_2`
                     # calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="bad")
-
+                    train_loader = self.poisoned_emnist_train_loader if global_user_idx in selected_attackers_1 else self.poisoned_emnist_train_loader
                     if self.prox_attack:
                         # estimate w_hat
                         for inner_epoch in range(1, self.local_training_period+1):
@@ -894,20 +903,20 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                     for e in range(1, self.adversarial_local_training_period+1):
                        # we always assume net index 0 is adversary
                         if self.defense_technique in ('krum', 'multi-krum'):
-                            train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                            train(net, self.device, train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
                                     pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                         elif self.defense_technique == 'kmeans-bases':
                             if flr < 50:
-                                train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                                train(net, self.device, train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
                                     pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                             else:
-                                train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                                train(net, self.device, train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
                                     pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                         else:
-                            train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                            train(net, self.device, train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
                                     pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
 
