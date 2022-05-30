@@ -1073,6 +1073,11 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                                         selected_attackers=selected_attackers,
                                                         device=self.device)   
             # logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
+                local_idxs_attacker_1 = [_id for _id in range(len(net_list)) if selected_node_indices[_id] in selected_attackers_1]
+                local_idxs_attacker_2 = [_id for _id in range(len(net_list)) if selected_node_indices[_id] in selected_attackers_2]
+                
+                print(f"local_idxs_attacker_1 is: {local_idxs_attacker_1}")
+                print(f"local_idxs_attacker_2 is: {local_idxs_attacker_2}")
                 print("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))             
                 print("Predicted Attackers in FL iteration-{}: {}".format(flr, pred_g_attacker))             
             elif self.defense_technique == "upper-by-class":
