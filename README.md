@@ -79,7 +79,7 @@ python simulated_averaging.py \
 --poison_type southwest \
 --norm_bound 2 \
 --device=cuda
-``` 
+```--> 
 
 ### Experiment guide (by Dung):
 ---
