@@ -1,4 +1,5 @@
 import pdb
+from numpy import average
 import pandas as pd
 import torch
 
@@ -8,6 +9,7 @@ from utils import *
 from geometric_median import geometric_median
 from sklearn.preprocessing import normalize
 from sklearn.preprocessing import MinMaxScaler
+from scipy.spatial.distance import pdist, squareform
 import sklearn.metrics.pairwise as smp
 import hdbscan
 # import logger
@@ -1095,7 +1097,7 @@ class MlFrl(Defense):
         total_client = len(g_user_indices)
 
         # NEW IDEA
-        robustLR_threshold = 2
+        robustLR_threshold = 4
         local_updates = vectorize_nets - vectorize_avg_net
         # print(f"len freq: {len(freq)}")
         local_updates = np.asarray(local_updates)
@@ -1127,7 +1129,7 @@ class MlFrl(Defense):
         sum_diff_by_label = calculate_sum_grad_diff(weight_update)
         norm_bias_list = normalize(bias_list, axis=1)
         norm_grad_diff_list = normalize(sum_diff_by_label, axis=1)
-        
+
         # UPDATE CUMMULATIVE COSINE SIMILARITY 
         for i, g_i in enumerate(g_user_indices):
             distance = []
@@ -1219,8 +1221,8 @@ class MlFrl(Defense):
         trusted_index = i_star # used for get labels of attackers
 
 
-        round_bias_pairwise = scaler.fit_transform(round_bias_pairwise)
-        round_weight_pairwise = scaler.fit_transform(round_weight_pairwise)
+        round_bias_pairwise = normalize(round_bias_pairwise)
+        round_weight_pairwise = normalize(round_weight_pairwise)
 
         for i, g_i in enumerate(g_user_indices):
             for j, g_j in enumerate(g_user_indices):
@@ -1259,6 +1261,7 @@ class MlFrl(Defense):
         print("[T_SCORE] attacker_local_idxs is: ", attacker_local_idxs)
         global_pred_attackers_indx = [g_user_indices[ind_] for ind_ in attacker_local_idxs]
         print("[T_SCORE] global_pred_attackers_indx: ", global_pred_attackers_indx)
+        print(f"Trusted index is: {i_star}")
         missed_attacker_idxs_by_thre = [at_id for at_id in participated_attackers if at_id not in attacker_local_idxs]
         attacker_local_idxs_2 = []
         saved_pairwise_sim = []
@@ -1282,25 +1285,145 @@ class MlFrl(Defense):
             hb_clusterer.fit(round_update_pw_cs)
             # print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
 
-            pred_labels = kmeans.fit_predict(saved_pairwise_sim)
+            pred_labels_2 = kmeans.fit_predict(saved_pairwise_sim)
+            print(f"pred_labels_2 of KMEANS is: {pred_labels_2}")
+
+            kmeans = KMeans(n_clusters = 3)
+            test_labels = kmeans.fit_predict(round_update_pw_cs)
             centroids = kmeans.cluster_centers_
             np_centroids = np.asarray(centroids)
-            test_labels = kmeans.fit_predict(round_update_pw_cs)
+            print(f"centroids: {np_centroids}")
             print(f"test_labels: {test_labels}")
+
+            all_data = round_update_pw_cs
+            # all_data = np.hstack((round_bias_pairwise, round_weight_pairwise))
+            # print(f"all_data.shape is: {all_data.shape}")
+            adj_mat = squareform(pdist(all_data, metric='cosine'))
+            # print(f"adj_mat: {adj_mat}")
+            W = np.zeros(adj_mat.shape)
+            # Sort the adjacency matrx by rows and record the indices
+            Adj_sort = np.argsort(adj_mat, axis=1)
+            # print(f"Adj_sort: {Adj_sort}")
+            # Set the weight (i,j) to 1 when either i or j is within the k-nearest neighbors of each other
+            # Compute the degree matrix and the unnormalized graph Laplacian
+
+            knn = 5
+            K = 3 #num of cluster
+            sigma = 1
+            # W = np.exp(-adj_mat/(2*sigma))
+            for i in range(Adj_sort.shape[0]):
+                adj_i_idxs = Adj_sort[i,:][:(knn+1)]
+                for j in adj_i_idxs:
+                    if j!=i:
+                        W[i,j] = np.exp(-adj_mat[i,j]/(2*sigma))
+                # W[i,Adj_sort[i,:][:(knn+1)]] = np.exp(-adj_mat/(2*sigma))
+                # Compute the matrix with the first K eigenvectors as columns based on the normalized type of L
+            # print(f"W: {W}")
+            D = np.diag(np.sum(W, axis=1))
+            # print(f"D: {D}")
+            L = D - W
+            normalized = 1 # for temporarily
+            if normalized == 1:   ## Random Walk normalized version
+                # Compute the inverse of the diagonal matrix
+                D_inv = np.diag(1/np.diag(D))
+                # Compute the eigenpairs of L_{rw}
+                Lambdas, V = np.linalg.eig(np.dot(D_inv, L))
+                # Sort the eigenvalues by their L2 norms and record the indices
+                ind = np.argsort(np.linalg.norm(np.reshape(Lambdas, (1, len(Lambdas))), axis=0))
+                V_K = np.real(V[:, ind[:K]])
+            elif normalized == 2:   ## Graph cut normalized version
+                # Compute the square root of the inverse of the diagonal matrix
+                D_inv_sqrt = np.diag(1/np.sqrt(np.diag(D)))
+                # Compute the eigenpairs of L_{sym}
+                Lambdas, V = np.linalg.eig(np.matmul(np.matmul(D_inv_sqrt, L), D_inv_sqrt))
+                # Sort the eigenvalues by their L2 norms and record the indices
+                ind = np.argsort(np.linalg.norm(np.reshape(Lambdas, (1, len(Lambdas))), axis=0))
+                V_K = np.real(V[:, ind[:K]])
+                if any(V_K.sum(axis=1) == 0):
+                    raise ValueError("Can't normalize the matrix with the first K eigenvectors as columns! Perhaps the number of clusters K or the number of neighbors in k-NN is too small.")
+                # Normalize the row sums to have norm 1
+                V_K = V_K/np.reshape(np.linalg.norm(V_K, axis=1), (V_K.shape[0], 1))
+            else:   ## Unnormalized version
+                # Compute the eigenpairs of L
+                Lambdas, V = np.linalg.eig(L)
+                # Sort the eigenvalues by their L2 norms and record the indices
+                ind = np.argsort(np.linalg.norm(np.reshape(Lambdas, (1, len(Lambdas))), axis=0))
+                V_K = np.real(V[:, ind[:K]])
+                
+            # Conduct K-Means on the matrix with the first K eigenvectors as columns
+            kmeans_ = KMeans(n_clusters=K, init='k-means++', random_state=0).fit(V_K)
+            print(f"kmeans_.labels_: {kmeans_.labels_}")
+
+            pred_labels = test_labels
             
             
             cls_0_idxs = np.argwhere(np.asarray(pred_labels) == 0).flatten()
             cls_1_idxs = np.argwhere(np.asarray(pred_labels) == 1).flatten()
-            dist_0 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_0_idxs]-np_centroids[0])))/len(cls_0_idxs)
-            dist_1 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_1_idxs]-np_centroids[1])))/len(cls_1_idxs)
-            print(f"dist_0 is {dist_0}, dist_1 is {dist_1}")
+            cls_2_idxs = np.argwhere(np.asarray(pred_labels) == 2).flatten()
+
+            # cls_1_idxs = np.argwhere(np.asarray(pred_labels) == 1).flatten()
+            # dist_0 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_0_idxs]-np_centroids[0])))/len(cls_0_idxs)
+            # dist_1 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_1_idxs]-np_centroids[1])))/len(cls_1_idxs)
+            # dist_2 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_2_idxs]-np_centroids[2])))/len(cls_2_idxs)
             
+            dist_0 = np.sqrt(np.sum(np.square(round_update_pw_cs[cls_0_idxs]-np_centroids[0])))/len(cls_0_idxs)
+            dist_1 = np.sqrt(np.sum(np.square(round_update_pw_cs[cls_1_idxs]-np_centroids[1])))/len(cls_1_idxs)
+            dist_2 = np.sqrt(np.sum(np.square(round_update_pw_cs[cls_2_idxs]-np_centroids[2])))/len(cls_2_idxs)
+
+            print(f"dist_0 is {dist_0}, dist_1 is {dist_1}, dist_2 is {dist_2}")
+            d_0 = []
+            if len(cls_0_idxs) == 1:
+                avg_d0 = 0
+            else:
+                for idx_ in cls_0_idxs:
+                    for idx2_ in cls_0_idxs:
+                        if idx_ != idx2_:
+                            d_0.append(1.0-round_update_pw_cs[idx_, idx2_])
+                avg_d0 = average(d_0)
             
+            d_1 = []
+            if len(cls_1_idxs) == 1:
+                avg_d1 = 0
+            else:
+                for idx_ in cls_1_idxs:
+                    for idx2_ in cls_1_idxs:
+                        if idx_ != idx2_:
+                            d_1.append(1.0-round_update_pw_cs[idx_, idx2_])
+                avg_d1 = average(d_1)
+
+            d_2 = []
+            if len(cls_2_idxs) == 1:
+                avg_d2 = 0
+            else:
+                for idx_ in cls_2_idxs:
+                    for idx2_ in cls_2_idxs:
+                        if idx_ != idx2_:
+                            d_2.append(1.0-round_update_pw_cs[idx_, idx2_])
+                avg_d2 = average(d_2)
+            intra_distance = [avg_d0, avg_d1, avg_d2]
+            np_arr_dis = np.asarray([dist_0, dist_1, dist_2])
+            # np_arr_dis = np.asarray(intra_distance)
+            print(f"km_dist_0 is {avg_d0}, km_dist_1 is {avg_d1}, km_dist_2 is {avg_d2}")
             trusted_label = pred_labels[trusted_index]
-            label_attack = 0 if trusted_label == 1 else 1
-        
-            pred_attackers_indx_2 = np.argwhere(np.asarray(pred_labels) == label_attack).flatten()
-        
+
+            adv_cluster_idx = 0
+            ben_cluster_idx = 0
+            sus_cluster_idx = 0
+            for cluster_label in range(3):
+                if cluster_label == trusted_label:
+                    ben_cluster_idx = cluster_label
+                elif cluster_label == np.argmin(np_arr_dis).flatten():
+                    adv_cluster_idx = cluster_label
+                else:
+                    sus_cluster_idx = cluster_label
+
+            print(f"adv_cluster_idx is: {adv_cluster_idx}, ben_cluster_idx is: {ben_cluster_idx}, sus_cluster_idx is: {sus_cluster_idx}")
+
+            # label_attack = 0 if trusted_label == 1 else 1
+            pred_attackers_indx_2 = np.argwhere(np.asarray(pred_labels) == adv_cluster_idx).flatten()
+            sus_cluster_idx = np.argwhere(np.asarray(pred_labels) == sus_cluster_idx).flatten()
+
+            print(f"pred_attackers_indx_2: {pred_attackers_indx_2}, sus_cluster_idx: {sus_cluster_idx}")
             
             print("[PAIRWISE] pred_attackers_indx: ", pred_attackers_indx_2)
             pred_normal_client = [_id for _id in range(total_client) if _id not in pred_attackers_indx_2]
