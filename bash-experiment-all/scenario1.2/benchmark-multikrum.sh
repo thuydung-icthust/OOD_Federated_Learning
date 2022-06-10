@@ -25,4 +25,5 @@ python simulated_averaging.py \
 --attacker_percent 0.25 \
 --instance benchmark-MULTI-KRUM-25-percent-M30 \
 --wandb_group LENET-EMNIST-ARDIS-BLACKBOX \
+--log_folder logging \
 --device=cuda

@@ -25,4 +25,5 @@ python simulated_averaging.py \
 --attacker_percent 0.25 \
 --instance idea-klfrl-v2.0.2-25-percent-M30 \
 --wandb_group LENET-EMNIST-ARDIS-BLACKBOX \
+--log_folder logging \
 --device=cuda

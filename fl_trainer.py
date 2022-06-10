@@ -712,6 +712,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.attack_case = arguments['attack_case']
         self.stddev = arguments['stddev']
         self.attacker_percent = arguments['attacker_percent']
+        self.log_folder = arguments['log_folder']
         self.reputation_score = [1.0 for _ in range(arguments['num_nets'])] #init reputation score for all clients in the FL systems
         self.local_update_history = [[0.0] for _ in range(arguments['num_nets'])] #theta i,t => keep track of update history of clients
         self.flatten_weights = []
@@ -1169,14 +1170,6 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
             self.flatten_net_avg = flatten_model(self.net_avg)
 
-            # logging_items = get_logging_items(net_list, custom_net, custom_net_2, selected_node_indices, prev_avg, self.net_avg, selected_attackers, flr)
-            # with open('logging/new_w_benchmark_01_200.csv', 'a+') as lf:
-            #     write = csv.writer(lf)
-            #     write.writerows(logging_items)
-
-            # df_data = logging_items
-            # df_writer = pd.DataFrame(df_data)
-            # df_writer.to_csv("logging/test_write.csv", mode='a+')
             prev_avg = copy.deepcopy(self.net_avg)
             if self.defense_technique == "weak-dp":
                 # add noise to self.net_avg

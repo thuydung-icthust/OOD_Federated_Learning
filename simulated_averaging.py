@@ -100,7 +100,9 @@ if __name__ == "__main__":
     parser.add_argument('--instance', type=str, default="benchmark",
                         help='the instance name of wandb')       
     parser.add_argument('--wandb_group', type=str, default="Scenario 1",
-                        help='the group name of wandb')                   
+                        help='the group name of wandb')       
+    parser.add_argument('--log_folder', type=str, default="logging",
+                        help='log folder to save the result')              
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
@@ -173,12 +175,12 @@ if __name__ == "__main__":
 
     # let's remain a copy of the global model for measuring the norm distance:
     # group_name = f"{args.dataset}"
-    if not os.path.exists(f'logging/{args.wandb_group}'):
-        os.makedirs(f'logging/{args.wandb_group}')
+    if not os.path.exists(f'{args.log_folder}/{args.wandb_group}'):
+        os.makedirs(f'{args.log_folder}/{args.wandb_group}')
     group_name = f"{args.wandb_group}"
     instance_name = f"{args.instance}"
     vanilla_model = copy.deepcopy(net_avg)
-    log_file_name = f"logging/{args.wandb_group}/{args.instance}"
+    log_file_name = f"{args.log_folder}/{args.wandb_group}/{args.instance}"
 
     wandb_ins = wandb.init(project="Backdoor attack in FL",
                entity="aiotlab",
@@ -191,6 +193,7 @@ if __name__ == "__main__":
             # "net_dataidx_map":net_dataidx_map,
             "num_nets":args.num_nets,
             "dataset":args.dataset,
+            "log_folder":args.log_folder,
             # "model":args.model,
             "part_nets_per_round":args.part_nets_per_round,
             "attacker_pool_size":args.attacker_pool_size,
@@ -302,6 +305,7 @@ if __name__ == "__main__":
             "stddev":args.stddev,
             "attacker_percent":args.attacker_percent,
             "instance": log_file_name,
+            "log_folder": args.log_folder,
      }
             
         fixed_pool_fl_trainer = FixedPoolFederatedLearningTrainer(arguments=arguments)

@@ -24,4 +24,5 @@ python simulated_averaging.py \
 --attacker_percent 0.25 \
 --instance benchmark-RFA-25-percent \
 --wandb_group VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
+--log_folder logging \
 --device=cuda
