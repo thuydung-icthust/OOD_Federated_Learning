@@ -1081,7 +1081,11 @@ class MlFrl(Defense):
         with open(f'{self.instance}_cluster_log.csv', 'w', newline='') as log_csv:
             writer = csv.DictWriter(log_csv, fieldnames=['round', 'has_attacker', 'trusted_krum_s', 'adv_krum_s_avg', 'ben_krum_s_avg', 'adv_krum_s', 'ben_krum_s'])
             writer.writeheader() 
+<<<<<<< HEAD
         with open(f'clustering_investigate_03.csv', 'w', newline='') as cluster_csv:
+=======
+        with open(f'clustering_investigate_02.csv', 'w', newline='') as cluster_csv:
+>>>>>>> 9154048564274c0df1e99604f87ec93eea203aac
             writer = csv.DictWriter(cluster_csv, fieldnames=['flr', 'cls_idx', 'attacker_idxs', 'avg_ks_gap[id_]', 'avg_us_score[id_]', 'avg_d_to_centroids[id_]', 'var_centroid', 'var_ks_gap', 'var_us_score'])   
             writer.writeheader()
     
