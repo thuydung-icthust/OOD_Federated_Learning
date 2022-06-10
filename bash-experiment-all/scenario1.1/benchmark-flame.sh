@@ -11,7 +11,7 @@ python simulated_averaging.py \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
 --defense_method flame \
---attack_method pgd \
+--attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \
 --project_frequency 10 \
@@ -23,6 +23,6 @@ python simulated_averaging.py \
 --norm_bound 2 \
 --attacker_percent 0.25 \
 --instance benchmark-FLAME-25-percent \
---wandb_group VGG9-CIFAR10-SOUTHWEST-PGD \
+--wandb_group VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
 --log_folder logging \
 --device=cuda

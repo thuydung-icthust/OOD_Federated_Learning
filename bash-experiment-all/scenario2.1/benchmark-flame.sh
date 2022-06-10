@@ -23,6 +23,6 @@ python simulated_averaging.py \
 --norm_bound 2 \
 --attacker_percent 0.25 \
 --instance benchmark-FLAME-25-percent \
---wandb_group VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
+--wandb_group VGG9-CIFAR10-SOUTHWEST-PGD \
 --log_folder logging \
 --device=cuda
