@@ -11,7 +11,7 @@ python simulated_averaging.py \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
 --defense_method flame \
---attack_method blackbox \
+--attack_method pgd \
 --attack_case edge-case \
 --model_replacement False \
 --project_frequency 10 \
