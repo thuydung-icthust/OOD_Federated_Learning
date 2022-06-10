@@ -1080,7 +1080,59 @@ class MlFrl(Defense):
         
         with open(f'{self.instance}_cluster_log.csv', 'w', newline='') as log_csv:
             writer = csv.DictWriter(log_csv, fieldnames=['round', 'has_attacker', 'trusted_krum_s', 'adv_krum_s_avg', 'ben_krum_s_avg', 'adv_krum_s', 'ben_krum_s'])
-            writer.writeheader()    
+            writer.writeheader() 
+        with open(f'clustering_investigate_02.csv', 'w', newline='') as cluster_csv:
+            writer = csv.DictWriter(cluster_csv, fieldnames=['flr', 'cls_idx', 'attacker_idxs', 'avg_ks_gap[id_]', 'avg_us_score[id_]', 'avg_d_to_centroids[id_]', 'var_centroid', 'var_ks_gap', 'var_us_score'])   
+            writer.writeheader()
+    
+    def get_cluster_info(self, pred_labels, input_clustering, np_centroids, trusted_idx, np_krum_score, layer1_score, num_class = 3, attacker_idxs = [], flr=0):
+        np_krum_score = np.asarray(np_krum_score)
+        cls_idxs = [np.argwhere(np.asarray(pred_labels) == i).flatten() for i in range(num_class)]  
+        d_to_centroids = [input_clustering[cls_idxs[i]]-np_centroids[i] for i in range(num_class)]
+        d_to_centroids = [np.sqrt(np.sum(np.square(d), axis=1))/len(cls_idxs[i]) for i,d in enumerate(d_to_centroids)]
+        # d_to_centroids = np.asarray(d_to_centroids)
+        print(f"d_to_centroids: {d_to_centroids}")
+        # print(f"d_to_centroids.shape is: {d_to_centroids.shape}")
+        for id_, idxs in enumerate(cls_idxs):
+            print(f"Cluster {id_}: {idxs}")
+        avg_d_to_centroids = [np.average(d_to_centroids[i]) for i in range(num_class)]
+        print(f"avg_d_to_centroids: {avg_d_to_centroids}")
+        var_centroid = np.var(avg_d_to_centroids)/np.mean(avg_d_to_centroids)*100.0
+        print(f"var of avg_d_to_centroids is: {np.var(avg_d_to_centroids)/np.mean(avg_d_to_centroids)*100.0}")
+        # print(f"np_krum_score: {np_krum_score}")
+        # print(np.asarray(np_krum_score)[cls_idxs[0]])
+        # print([np_krum_score[cls_idxs[i]]-np_krum_score[trusted_idx] for i in range(num_class)])
+        ks_gap = [np_krum_score[cls_idxs[i]]-np_krum_score[trusted_idx] for i in range(num_class)]
+        # print(f"avg_ks_gap is: {ks_gap}")
+        avg_ks_gap = [np.average(np_krum_score[cls_idxs[i]]-np_krum_score[trusted_idx]) for i in range(num_class)]
+        avg_us_score = [np.average(layer1_score[cls_idxs[i]]) for i in range(num_class)]
+        avg_us_score = np.asarray(avg_us_score)
+        avg_ks_gap = np.asarray(avg_ks_gap)
+        
+        
+        avg_us_score_norm = avg_us_score/sum(avg_us_score)
+        print(f"avg_ks_gap is: {avg_ks_gap}")
+        var_ks_gap = np.var(avg_ks_gap)/np.mean(avg_ks_gap)*100.0
+        print(f"var of avg_ks_gap is: {np.var(avg_ks_gap)/np.mean(avg_ks_gap)*100.0}")
+        print(f"avg_us_score is: {avg_us_score}")
+        print(f"var of avg_us_score is: {np.var(avg_us_score)/np.mean(avg_us_score)*100.0}")
+        var_us_score = np.var(avg_us_score)/np.mean(avg_us_score)*100.0
+        print(f"normalized avg_us_score is: {avg_us_score_norm}")
+        print(f"avg of normalize avg_us_score is: {np.average(avg_us_score_norm)}")
+        
+        records = []
+        
+        
+        for id_, cls_idx in enumerate(cls_idxs):
+            record = (flr, cls_idx, attacker_idxs, str(avg_ks_gap[id_]), str(avg_us_score[id_]), str(avg_d_to_centroids[id_]), str(var_centroid), str(var_ks_gap), str(var_us_score))
+            records.append(record)
+        # record = ()
+        with open("clustering_investigate_02.csv", "a+") as fuzzy_file:
+            writer = csv.writer(fuzzy_file)
+            writer.writerows(records)
+            
+        
+    
     def exec(self, client_models, num_dps, net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, device, *args, **kwargs):
         from sklearn.cluster import KMeans
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
@@ -1097,7 +1149,7 @@ class MlFrl(Defense):
         total_client = len(g_user_indices)
 
         # NEW IDEA
-        robustLR_threshold = 4
+        robustLR_threshold = 2
         local_updates = vectorize_nets - vectorize_avg_net
         # print(f"len freq: {len(freq)}")
         local_updates = np.asarray(local_updates)
@@ -1285,15 +1337,19 @@ class MlFrl(Defense):
             hb_clusterer.fit(round_update_pw_cs)
             # print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
 
-            pred_labels_2 = kmeans.fit_predict(saved_pairwise_sim)
-            print(f"pred_labels_2 of KMEANS is: {pred_labels_2}")
+            pred_labels_1 = kmeans.fit_predict(saved_pairwise_sim)
+            centroids = kmeans.cluster_centers_
+            np_centroids_1 = np.asarray(centroids)
+            print(f"CLUSTER 1 of KMEANS is: {pred_labels_1}")
+            self.get_cluster_info(pred_labels=pred_labels_1, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_1, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, attacker_idxs = participated_attackers, flr=round)
 
             kmeans = KMeans(n_clusters = 3)
             test_labels = kmeans.fit_predict(round_update_pw_cs)
             centroids = kmeans.cluster_centers_
             np_centroids = np.asarray(centroids)
-            print(f"centroids: {np_centroids}")
-            print(f"test_labels: {test_labels}")
+            # print(f"centroids: {np_centroids}")
+            print(f"CLUSTER 2 of KMEANS is: {test_labels}")
+            self.get_cluster_info(pred_labels=test_labels, input_clustering=round_update_pw_cs, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, attacker_idxs=participated_attackers, flr=round)
 
             all_data = round_update_pw_cs
             # all_data = np.hstack((round_bias_pairwise, round_weight_pairwise))
