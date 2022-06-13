@@ -1,6 +1,7 @@
 import pdb
 from numpy import average
 import pandas as pd
+from sklearn.cluster import KMeans
 import torch
 
 from scipy.special import logit, expit
@@ -711,6 +712,82 @@ class KrMLRFL(Defense):
             writer = csv.DictWriter(cluster_csv, fieldnames=['flr', 'km', 'cls_idx', 'attacker_idxs', 'avg_ks_gap[id_]', 'avg_us_score[id_]', 'raw_us_score[id_]', 'avg_us_score[id_]' , 'avg_d_to_centroids[id_]', 'var_centroid', 'var_ks_gap', 'var_us_score'])   
             writer.writeheader()
     
+    def get_fuzzy_terms(self, pred_labels, input_clustering, np_centroids, trusted_idx, np_krum_score, layer1_score, score_, num_class = 3):
+        raw_us_scores = np.asarray(score_)
+        np_krum_score = np.asarray(np_krum_score)
+        cls_idxs = [np.argwhere(np.asarray(pred_labels) == i).flatten() for i in range(num_class)]  
+        d_to_centroids = [input_clustering[cls_idxs[i]]-np_centroids[i] for i in range(num_class)]
+        d_to_centroids = [np.sqrt(np.sum(np.square(d), axis=1))/len(cls_idxs[i]) for i,d in enumerate(d_to_centroids)]
+        r_us_scores = [raw_us_scores[cls_idxs[i]] for i in range(num_class)]
+        avg_r_us_scores = [np.average(raw_us_scores[cls_idxs[i]]) for i in range(num_class)]
+        avg_d_to_centroids = [np.average(d_to_centroids[i]) for i in range(num_class)]
+        avg_ks_gap = [np.average(np_krum_score[cls_idxs[i]]-np_krum_score[trusted_idx]) for i in range(num_class)]
+        avg_us_score = [np.average(layer1_score[cls_idxs[i]]) for i in range(num_class)]
+        avg_us_score = np.asarray(avg_us_score)
+        avg_ks_gap = np.asarray(avg_ks_gap)
+        
+        ks_gaps = []
+        us_gaps = []
+        if num_class == 2:
+            ks_gap_0 = avg_ks_gap[0]/avg_ks_gap[1]
+            us_gap_0 = avg_us_score[0]/avg_us_score[1]
+            ks_gap_1 = avg_ks_gap[1]/avg_ks_gap[0]
+            us_gap_1 = avg_us_score[1]/avg_us_score[0]
+            ks_gaps.append(ks_gap_0)
+            us_gaps.append(us_gap_0)
+            ks_gaps.append(ks_gap_1)
+            us_gaps.append(us_gap_1)
+        elif num_class == 3:
+            ks_gap_0 = 2.0*avg_ks_gap[0]/(avg_ks_gap[1]+avg_ks_gap[2])
+            us_gap_0 = 2.0*avg_us_score[0]/(avg_us_score[1]+avg_us_score[2])
+            ks_gap_1 = 2.0*avg_ks_gap[1]/(avg_ks_gap[2]+avg_ks_gap[0])
+            us_gap_1 = 2.0*avg_us_score[1]/(avg_us_score[2]+avg_us_score[0])
+            ks_gap_2 = 2.0*avg_ks_gap[2]/(avg_ks_gap[1]+avg_ks_gap[0])
+            us_gap_2 = 2.0*avg_us_score[2]/(avg_us_score[1]+avg_us_score[0])
+            ks_gaps.append(ks_gap_0)
+            us_gaps.append(us_gap_0)
+            ks_gaps.append(ks_gap_1)
+            us_gaps.append(us_gap_1)
+            ks_gaps.append(ks_gap_2)
+            us_gaps.append(us_gap_2)
+        return ks_gaps, us_gaps, cls_idxs
+    
+    def fuzzy_logic(self, input_clustering, trusted_idx, participated_attackers, np_krum_score, layer1_score, score_):
+        kmeans = KMeans(n_clusters = 2)    
+        pred_labels = kmeans.fit_predict(input_clustering)
+        centroids = kmeans.cluster_centers_
+        np_centroids = np.asarray(centroids)
+        # print(f"CLUSTER 1 of KMEANS is: {pred_labels}")
+        self.get_cluster_info(pred_labels=pred_labels, input_clustering=input_clustering, np_centroids=np_centroids, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+        ks_gaps, us_gaps, cls_idxs = self.get_fuzzy_terms(pred_labels=pred_labels, input_clustering=input_clustering, np_centroids=np_centroids, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 2, score_ = score_)
+        
+        kmeans_ = KMeans(n_clusters = 3)
+        pred_labels_2 = kmeans_.fit_predict(input_clustering)
+        centroids_2 = kmeans_.cluster_centers_
+        np_centroids_2 = np.asarray(centroids_2)
+        # print(f"CLUSTER 2 of KMEANS is: {pred_labels_2}")
+        self.get_cluster_info(pred_labels=pred_labels_2, input_clustering=input_clustering, np_centroids=np_centroids_2, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 3, attacker_idxs = participated_attackers, flr=round, km=2, score_ = score_)
+        ks_gaps_2, us_gaps_2, cls_idxs_2 = self.get_fuzzy_terms(pred_labels=pred_labels_2, input_clustering=input_clustering, np_centroids=np_centroids_2, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 3, score_ = score_)
+        
+        print("START PERFORMING FUZZY LOGIC HERE!!!")
+        print(f"ks_gaps: {ks_gaps}, us_gaps: {us_gaps}, cls_idxs: {cls_idxs}")
+        print(f"ks_gaps_2: {ks_gaps_2}, us_gaps_2: {us_gaps_2}, cls_idxs_2: {cls_idxs_2}")
+        
+        fuzzy_terms = {"1": [], "2": []}
+        for id_, idxs in enumerate(cls_idxs):
+            cnt_ = np.argmax([len(np.intersect1d(idxs, idxs_2)) for idxs_2 in cls_idxs_2])
+            child_cls_id = cnt_
+            print(f"child_cls: {child_cls_id}")
+            boosting_factor_1 = ks_gaps_2[child_cls_id]/ks_gaps[id_]
+            boosting_factor_2 = us_gaps_2[child_cls_id]/us_gaps[id_]
+            fuzzy_terms["1"].append(boosting_factor_1)
+            fuzzy_terms["2"].append(boosting_factor_2)
+        print(f"fuzzy_terms: {fuzzy_terms}")
+        
+            
+                
+        
+              
     def get_cluster_info(self, pred_labels, km, input_clustering, np_centroids, trusted_idx, np_krum_score, layer1_score, score_, num_class = 3, attacker_idxs = [], flr=0):
         raw_us_scores = np.asarray(score_)
         np_krum_score = np.asarray(np_krum_score)
@@ -720,9 +797,7 @@ class KrMLRFL(Defense):
         r_us_scores = [raw_us_scores[cls_idxs[i]] for i in range(num_class)]
         avg_r_us_scores = [np.average(raw_us_scores[cls_idxs[i]]) for i in range(num_class)]
         
-        # d_to_centroids = np.asarray(d_to_centroids)
         print(f"d_to_centroids: {d_to_centroids}")
-        # print(f"d_to_centroids.shape is: {d_to_centroids.shape}")
         for id_, idxs in enumerate(cls_idxs):
             print(f"Cluster {id_}: {idxs}")
         avg_d_to_centroids = [np.average(d_to_centroids[i]) for i in range(num_class)]
@@ -757,7 +832,7 @@ class KrMLRFL(Defense):
         with open("clustering_investigate_04.csv", "a+") as fuzzy_file:
             writer = csv.writer(fuzzy_file)
             writer.writerows(records)
-            
+
     
     def exec(self, client_models, num_dps, net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, model_name, device, *args, **kwargs):
         from sklearn.cluster import KMeans
@@ -923,15 +998,16 @@ class KrMLRFL(Defense):
             centroids = kmeans.cluster_centers_
             np_centroids = np.asarray(centroids)
             print(f"CLUSTER 1 of KMEANS is: {pred_labels}")
-            self.get_cluster_info(pred_labels=pred_labels, input_clustering=saved_pairwise_sim, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
-            
+            # self.get_cluster_info(pred_labels=pred_labels, input_clustering=saved_pairwise_sim, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+            # ks_gaps, us_gaps = self.get_fuzzy_terms(pred_labels=pred_labels, input_clustering=saved_pairwise_sim, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, score_ = score_)
             kmeans_ = KMeans(n_clusters = 3)
             pred_labels_2 = kmeans_.fit_predict(saved_pairwise_sim)
             centroids_2 = kmeans_.cluster_centers_
             np_centroids_2 = np.asarray(centroids_2)
             print(f"CLUSTER 2 of KMEANS is: {pred_labels_2}")
-            self.get_cluster_info(pred_labels=pred_labels_2, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_2, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, attacker_idxs = participated_attackers, flr=round, km=2, score_ = score_)
-            
+            # self.get_cluster_info(pred_labels=pred_labels_2, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_2, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, attacker_idxs = participated_attackers, flr=round, km=2, score_ = score_)
+            # ks_gaps_2, us_gaps_2 = self.get_fuzzy_terms(pred_labels=pred_labels_2, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_2, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, score_ = score_)
+            self.fuzzy_logic(input_clustering=saved_pairwise_sim, trusted_idx=i_star, participated_attackers=participated_attackers, np_krum_score=scores, layer1_score=t_score, score_=score_)
             
             
             cls_0_idxs = np.argwhere(np.asarray(pred_labels) == 0).flatten()
