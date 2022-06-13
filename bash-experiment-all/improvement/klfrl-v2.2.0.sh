@@ -24,5 +24,5 @@ python simulated_averaging.py \
 --attacker_percent 0.25 \
 --instance idea-klfrl-v2.0.2-25-percent \
 --rand_seed 3 \
---wandb_group VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
+--wandb_group impr-VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
 --device=cuda:2
