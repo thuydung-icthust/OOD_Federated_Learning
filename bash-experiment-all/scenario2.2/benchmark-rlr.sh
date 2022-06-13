@@ -10,7 +10,7 @@ python simulated_averaging.py \
 --model lenet \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method flame \
+--defense_method rlr \
 --attack_method pgd \
 --attack_case edge-case \
 --model_replacement False \
@@ -23,6 +23,6 @@ python simulated_averaging.py \
 --poison_type ardis \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance benchmark-FLAME-25-percent-M30 \
+--instance benchmark-RLR-25-percent-M30 \
 --wandb_group LENET-EMNIST-ARDIS-PGD \
 --device=cuda
