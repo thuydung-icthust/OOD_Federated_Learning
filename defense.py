@@ -1091,10 +1091,32 @@ class KrMLRFL(Defense):
             
             
             saved_pairwise_sim = np.hstack((cummulative_w, cummulative_b))
-            elbow_pred_labels, selected_centroids, selected_num_clusters = self.elbow_kmeans(saved_pairwise_sim)
-            elbow_pred_idxs, diff_gap = self.get_cluster_info(pred_labels=elbow_pred_labels, input_clustering=saved_pairwise_sim, np_centroids=selected_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = selected_num_clusters, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
-            print(f"elbow_pred_labels: {elbow_pred_labels}")
-            pred_attackers_indx_2 = elbow_pred_idxs
+            # elbow_pred_labels, selected_centroids, selected_num_clusters = self.elbow_kmeans(saved_pairwise_sim)
+            # elbow_pred_idxs, diff_gap = self.get_cluster_info(pred_labels=elbow_pred_labels, input_clustering=saved_pairwise_sim, np_centroids=selected_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = selected_num_clusters, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+            # print(f"elbow_pred_labels: {elbow_pred_labels}")
+            kmeans = KMeans(n_clusters = 2)
+            # kmeans.fit_predict(cummulative_cs)
+            pred_labels = kmeans.fit_predict(saved_pairwise_sim)
+            centroids = kmeans.cluster_centers_
+            np_centroids = np.asarray(centroids)
+            
+            
+            cls_0_idxs = np.argwhere(np.asarray(pred_labels) == 0).flatten()
+            cls_1_idxs = np.argwhere(np.asarray(pred_labels) == 1).flatten()
+            dist_0 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_0_idxs]-np_centroids[0])))/len(cls_0_idxs)
+            dist_1 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_1_idxs]-np_centroids[1])))/len(cls_1_idxs)
+            print(f"dist_0 is {dist_0}, dist_1 is {dist_1}")
+            
+            
+            print(f"centroids are: {np_centroids}")
+            print("pred_labels of combination is: ", pred_labels)
+            print(f"trusted_index is {trusted_index}")
+            print(f"g_trusted_index is {g_user_indices[trusted_index]}")
+            
+            trusted_label = pred_labels[trusted_index]
+            label_attack = 0 if trusted_label == 1 else 1
+        
+            pred_attackers_indx_2 = np.argwhere(np.asarray(pred_labels) == label_attack).flatten()
             
             print("[PAIRWISE] pred_attackers_indx: ", pred_attackers_indx_2)
             pred_normal_client = [_id for _id in range(total_client) if _id not in pred_attackers_indx_2]
@@ -1119,8 +1141,8 @@ class KrMLRFL(Defense):
 
             if round >= 50:
                 final_attacker_idxs = pseudo_final_attacker_idxs
-                if diff_gap > 5.0 and diff_gap < 20.0:
-                    final_attacker_idxs = attacker_local_idxs_2
+                # if diff_gap > 5.0 and diff_gap < 20.0:
+                #     final_attacker_idxs = attacker_local_idxs_2
             # else: 
             #     final_attacker_idxs = attacker_local_idxs
             print("assumed final_attacker_idxs: ", pseudo_final_attacker_idxs)
@@ -1138,10 +1160,11 @@ class KrMLRFL(Defense):
         
         trustworthy_threshold = 0.75 #TODO
         filtered_attacker_idxs = list(final_attacker_idxs.copy())
-        for idx in final_attacker_idxs:
-            g_idx = g_user_indices[idx]
-            if np.average(self.trustworthy_scores[g_idx]) >= trustworthy_threshold:
-                filtered_attacker_idxs.remove(idx)
+        if round >= 50:
+            for idx in final_attacker_idxs:
+                g_idx = g_user_indices[idx]
+                if np.average(self.trustworthy_scores[g_idx]) >= trustworthy_threshold:
+                    filtered_attacker_idxs.remove(idx)
         
         print(f"filtered_attacker_idxs: {filtered_attacker_idxs}")        
         if not filtered_attacker_idxs:

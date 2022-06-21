@@ -22,7 +22,7 @@ python simulated_averaging.py \
 --poison_type southwest \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance idea-dyn-clustering-klfrl-v2.0.2-25-percent \
+--instance idea-trusthworthy-score-klfrl-v2.0.2-25-percent \
 --rand_seed 3 \
 --wandb_group impr-VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
 --device=cuda:2
