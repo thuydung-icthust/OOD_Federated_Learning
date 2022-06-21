@@ -2,6 +2,7 @@ import pdb
 from numpy import average
 import pandas as pd
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 import torch
 
 from scipy.special import logit, expit
@@ -12,6 +13,7 @@ from sklearn.preprocessing import normalize
 from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import pdist, squareform
 import sklearn.metrics.pairwise as smp
+from scipy.spatial import distance
 import hdbscan
 # import logger
 
@@ -495,11 +497,6 @@ class CONTRA(Defense):
                     #     alignment_levels[net_idx][client_p] *= min(1.0, float(avg_k_top_cs[net_idx])/1.0)
             a = np.asarray(alignment_levels[net_idx])
             a = a[a != 0.0]
-            # print("a: ", a)
-            # print(max(a))
-            # print("alignment_levels[net_idx]: ", alignment_levels[net_idx])
-            # print("max(alignment_levels[net_idx]: ", max(alignment_levels[net_idx]))
-            # print(alignment_levels[net_idx].shape)
             lr_net_idx = 1.0 - np.amax(alignment_levels[net_idx])
             #print("lr_net_idx: ", lr_net_idx)
             lr_list[net_idx] = lr_net_idx
@@ -684,7 +681,7 @@ class KrMLRFL(Defense):
         # print(self.pairwise_cs.shape)
         logger.info("Starting performing KrMLRFL...")
         self.pairwise_choosing_frequencies = np.zeros((total_workers, total_workers))
-
+        self.trustworthy_scores = [[0.5] for _ in range(total_workers+1)]
 
         with open(f'{self.instance}_combined_file_klfrl.csv', 'w', newline='') as outcsv:
             writer = csv.DictWriter(outcsv, fieldnames = ["flr", 
@@ -758,24 +755,32 @@ class KrMLRFL(Defense):
         centroids = kmeans.cluster_centers_
         np_centroids = np.asarray(centroids)
         # print(f"CLUSTER 1 of KMEANS is: {pred_labels}")
-        self.get_cluster_info(pred_labels=pred_labels, input_clustering=input_clustering, np_centroids=np_centroids, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+        # self.get_cluster_info(pred_labels=pred_labels, input_clustering=input_clustering, np_centroids=np_centroids, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
         ks_gaps, us_gaps, cls_idxs = self.get_fuzzy_terms(pred_labels=pred_labels, input_clustering=input_clustering, np_centroids=np_centroids, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 2, score_ = score_)
         
+        layer_1_cls_idx = cls_idxs[0] if trusted_idx in cls_idxs[0] else cls_idxs[1]
         kmeans_ = KMeans(n_clusters = 3)
         pred_labels_2 = kmeans_.fit_predict(input_clustering)
         centroids_2 = kmeans_.cluster_centers_
         np_centroids_2 = np.asarray(centroids_2)
         # print(f"CLUSTER 2 of KMEANS is: {pred_labels_2}")
-        self.get_cluster_info(pred_labels=pred_labels_2, input_clustering=input_clustering, np_centroids=np_centroids_2, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 3, attacker_idxs = participated_attackers, flr=round, km=2, score_ = score_)
+        # self.get_cluster_info(pred_labels=pred_labels_2, input_clustering=input_clustering, np_centroids=np_centroids_2, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 3, attacker_idxs = participated_attackers, flr=round, km=2, score_ = score_)
         ks_gaps_2, us_gaps_2, cls_idxs_2 = self.get_fuzzy_terms(pred_labels=pred_labels_2, input_clustering=input_clustering, np_centroids=np_centroids_2, trusted_idx=trusted_idx, layer1_score=layer1_score, np_krum_score=np_krum_score, num_class = 3, score_ = score_)
         
         print("START PERFORMING FUZZY LOGIC HERE!!!")
         print(f"ks_gaps: {ks_gaps}, us_gaps: {us_gaps}, cls_idxs: {cls_idxs}")
         print(f"ks_gaps_2: {ks_gaps_2}, us_gaps_2: {us_gaps_2}, cls_idxs_2: {cls_idxs_2}")
+        print(f"trusted client is: {trusted_idx}")
         
         fuzzy_terms = {"1": [], "2": []}
         for id_, idxs in enumerate(cls_idxs):
-            cnt_ = np.argmax([len(np.intersect1d(idxs, idxs_2)) for idxs_2 in cls_idxs_2])
+            child_element_cnts = [len(np.intersect1d(idxs, idxs_2)) for idxs_2 in cls_idxs_2]
+            high_scores = np.where(child_element_cnts == np.amax(child_element_cnts))
+            print(f"high_scores: {high_scores}")
+            if len(high_scores) > 1:
+                cnt_ = high_scores[np.argmax([ks_gaps_2[i]/ks_gaps[id_] for i in high_scores])]
+            else:
+                cnt_ = np.argmax([len(np.intersect1d(idxs, idxs_2)) for idxs_2 in cls_idxs_2])
             child_cls_id = cnt_
             print(f"child_cls: {child_cls_id}")
             boosting_factor_1 = ks_gaps_2[child_cls_id]/ks_gaps[id_]
@@ -783,11 +788,93 @@ class KrMLRFL(Defense):
             fuzzy_terms["1"].append(boosting_factor_1)
             fuzzy_terms["2"].append(boosting_factor_2)
         print(f"fuzzy_terms: {fuzzy_terms}")
+        print(f"participated_attackers are: {participated_attackers}")
         
+        # Find a set of suspicious clients
+        sus_cluster_idx = None
+        if np.argmax(ks_gaps) == np.argmax(us_gaps):
+            sus_cluster_idx = np.argmax(ks_gaps)
+            s = ks_gaps[sus_cluster_idx] + us_gaps[sus_cluster_idx]
+            if s < 5.0:
+                sus_cluster_idx = None
+        print(f"sus_cluster_idx: {sus_cluster_idx}")
+        pred_attackers_by_fuzzy = layer_1_cls_idx
+        if sus_cluster_idx:
+            if fuzzy_terms["1"][sus_cluster_idx] >= 1 and fuzzy_terms["2"][sus_cluster_idx] >=1:
+                pred_attackers_by_fuzzy = cls_idxs_2[sus_cluster_idx]
+        print(f"pred_attackers_by_fuzzy: {pred_attackers_by_fuzzy}")
+    
+    def elbow_kmeans(self, input_data):
+        from sklearn.cluster import KMeans
+        distortions = []
+        pred_k_labels = []
+        cluster_centroids = []
+        inertias = []
+        max_clusters = 7
+        init_clusters = 1
+        cur_clusters = init_clusters
+        thres_ = 0.20 # TODO: need to using dynamic threshold later
+        distortion_decrease = 0.0
+        distortion_decreases = [0.0]
+        prev_distortion = 0.0
+        pred_labels = None
+        find_optimal_clusters = False
+        selected_num_clusters = 1
+        selected_centroids = None
+        cur_pre_labels = None
+        silhouette_scores = []
+        # range_thres = [thres_ - 0.1, thres_+0.1]
+        for num_clus in range(1, max_clusters+1):
+            kmeanModel = KMeans(n_clusters=num_clus).fit(input_data)
+            cur_pre_labels = kmeanModel.fit_predict(input_data)
+            pred_k_labels.append(cur_pre_labels)
+            cluster_centroids.append(kmeanModel.cluster_centers_)
+            distortion = sum(np.min(distance.cdist(input_data, kmeanModel.cluster_centers_, 'euclidean'), axis=1)) / input_data.shape[0]
+            distortions.append(distortion)
+            if prev_distortion:
+                distortion_decrease = 1.0 - distortion/prev_distortion
+                distortion_decreases.append(distortion_decrease)
+            prev_distortion  = distortion 
+            if num_clus == 1:
+                score = 0.0
+            else:
+                score = silhouette_score(input_data, cur_pre_labels, metric='euclidean')
+            silhouette_scores.append(score)
             
-                
+            
+        #AFTER FINISHING ALL EXPLORATION ON EFFECT OF NUMBER OF CLUSTERS.
         
-              
+        while cur_clusters < max_clusters:
+            cur_distortion_des = distortion_decreases[cur_clusters-1]
+            next_distortion_des = distortion_decreases[cur_clusters]
+            if cur_distortion_des:
+                variation_rate_small = abs((cur_distortion_des - next_distortion_des)/cur_distortion_des) < 0.01 #TODO: replace later
+            else: 
+                variation_rate_small = True
+            if cur_distortion_des and cur_distortion_des < (thres_ + 0.001) and (cur_distortion_des >  distortion_decreases[cur_clusters] or variation_rate_small):
+                pred_labels = pred_k_labels[cur_clusters-2]
+                find_optimal_clusters = True
+                selected_centroids = cluster_centroids[cur_clusters-2]
+                selected_num_clusters = cur_clusters - 1
+                break
+            cur_clusters += 1
+        if find_optimal_clusters == False:
+            #DEFAULT: 2 cluster
+            pred_labels = pred_k_labels[1]
+            selected_centroids = cluster_centroids[1]
+            selected_num_clusters = 2
+        
+        #TRY WITH NEW METHOD 
+        print(f"silhouette_scores: {silhouette_scores}")
+        optimal_num_cls = np.argmax(silhouette_scores)
+        optimal_num_cls = optimal_num_cls + 1
+        pred_labels, selected_centroids, selected_num_clusters = pred_k_labels[optimal_num_cls-1], cluster_centroids[optimal_num_cls-1], optimal_num_cls
+        print(f"pred_k_labels: {pred_k_labels}")
+        print(f"distortions: {distortions}")
+        print(f"distortion_decreases: {distortion_decreases}")
+        print(f"pred_labels: {pred_labels}, \nselected_num_clusters:{optimal_num_cls}")
+        return pred_labels, selected_centroids, selected_num_clusters
+          
     def get_cluster_info(self, pred_labels, km, input_clustering, np_centroids, trusted_idx, np_krum_score, layer1_score, score_, num_class = 3, attacker_idxs = [], flr=0):
         raw_us_scores = np.asarray(score_)
         np_krum_score = np.asarray(np_krum_score)
@@ -822,9 +909,31 @@ class KrMLRFL(Defense):
         print(f"normalized avg_us_score is: {avg_us_score_norm}")
         print(f"avg of normalize avg_us_score is: {np.average(avg_us_score_norm)}")
         
+        # Find a set of suspicious clients
+        sus_cluster_idx = None
+        normal_cluster_idx = None
+        print(f"num_class: {num_class}")
+        for id_ in range(num_class):
+                if trusted_idx in cls_idxs[id_]:
+                    normal_cluster_idx = id_
+        if np.argmax(avg_ks_gap) == np.argmax(avg_us_score) or np.argmax(avg_ks_gap) == np.argmax(avg_d_to_centroids):
+            sus_cluster_idx = np.argmax(avg_ks_gap)
+
+        if sus_cluster_idx is None:
+            # pred_idxs = [in_ for in_ in range(len(layer1_score)) if in_ not in cls_idxs[normal_cluster_idx]]
+            sus_cluster_idx = np.argmax(avg_ks_gap)
+            pred_idxs = [in_ for in_ in range(len(layer1_score)) if in_ in cls_idxs[sus_cluster_idx]]
+            
+        else:
+            pred_idxs = cls_idxs[sus_cluster_idx]
+        
+        diff_gap = avg_ks_gap[sus_cluster_idx]/avg_ks_gap[normal_cluster_idx]
+        print(f"normal_cluster_idx is: {normal_cluster_idx}")
+        print(f"sus_cluster_idx: {sus_cluster_idx}")
+        print(f"diff_gap: {diff_gap}")
+        print(f"DYNAMIC ELBOW KMEANS predicted attackers are: {pred_idxs}")
+        
         records = []
-        
-        
         for id_, cls_idx in enumerate(cls_idxs):
             record = (flr, km, cls_idx, attacker_idxs, str(avg_ks_gap[id_]), str(avg_us_score[id_]), str(r_us_scores[id_]), str(avg_r_us_scores[id_]) , str(avg_d_to_centroids[id_]), str(var_centroid), str(var_ks_gap), str(var_us_score))
             records.append(record)
@@ -832,6 +941,7 @@ class KrMLRFL(Defense):
         with open("clustering_investigate_04.csv", "a+") as fuzzy_file:
             writer = csv.writer(fuzzy_file)
             writer.writerows(records)
+        return pred_idxs, diff_gap
 
     
     def exec(self, client_models, num_dps, net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, model_name, device, *args, **kwargs):
@@ -872,13 +982,6 @@ class KrMLRFL(Defense):
                 
                 cli_i_arr = np.hstack((bias_p_i, w_p_i))
                 cli_j_arr = np.hstack((bias_p_j, w_p_j))
-                
-                
-                # cs_arr = np.hstack(cs_1, cs_2)
-                
-            #     if j > i:
-            #         distance.append(float(np.linalg.norm(cli_i_arr-cli_j_arr)**2)) # let's change this to pytorch version
-            # neighbor_distances.append(distance)
                 
         logger.info("Starting performing KrMLRFL...")
        
@@ -955,6 +1058,7 @@ class KrMLRFL(Defense):
         
         t_score = np.array(t_score)
         threshold = min(0.5, np.median(t_score))
+        # threshold = np.median(t_score)
         
         
         participated_attackers = []
@@ -987,41 +1091,10 @@ class KrMLRFL(Defense):
             
             
             saved_pairwise_sim = np.hstack((cummulative_w, cummulative_b))
-            kmeans = KMeans(n_clusters = 2)    
-            hb_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.0, approx_min_span_tree=True,
-                                    gen_min_span_tree=False,
-                                    metric='euclidean', min_cluster_size=2, min_samples=1, p=None)
-            hb_clusterer.fit(saved_pairwise_sim[attacker_local_idxs])
-            print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
-
-            pred_labels = kmeans.fit_predict(saved_pairwise_sim)
-            centroids = kmeans.cluster_centers_
-            np_centroids = np.asarray(centroids)
-            print(f"CLUSTER 1 of KMEANS is: {pred_labels}")
-            # self.get_cluster_info(pred_labels=pred_labels, input_clustering=saved_pairwise_sim, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
-            # ks_gaps, us_gaps = self.get_fuzzy_terms(pred_labels=pred_labels, input_clustering=saved_pairwise_sim, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, score_ = score_)
-            kmeans_ = KMeans(n_clusters = 3)
-            pred_labels_2 = kmeans_.fit_predict(saved_pairwise_sim)
-            centroids_2 = kmeans_.cluster_centers_
-            np_centroids_2 = np.asarray(centroids_2)
-            print(f"CLUSTER 2 of KMEANS is: {pred_labels_2}")
-            # self.get_cluster_info(pred_labels=pred_labels_2, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_2, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, attacker_idxs = participated_attackers, flr=round, km=2, score_ = score_)
-            # ks_gaps_2, us_gaps_2 = self.get_fuzzy_terms(pred_labels=pred_labels_2, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_2, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, score_ = score_)
-            self.fuzzy_logic(input_clustering=saved_pairwise_sim, trusted_idx=i_star, participated_attackers=participated_attackers, np_krum_score=scores, layer1_score=t_score, score_=score_)
-            
-            
-            cls_0_idxs = np.argwhere(np.asarray(pred_labels) == 0).flatten()
-            cls_1_idxs = np.argwhere(np.asarray(pred_labels) == 1).flatten()
-            dist_0 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_0_idxs]-np_centroids[0])))/len(cls_0_idxs)
-            dist_1 = np.sqrt(np.sum(np.square(saved_pairwise_sim[cls_1_idxs]-np_centroids[1])))/len(cls_1_idxs)
-            print(f"dist_0 is {dist_0}, dist_1 is {dist_1}")
-            
-            
-            trusted_label = pred_labels[trusted_index]
-            label_attack = 0 if trusted_label == 1 else 1
-        
-            pred_attackers_indx_2 = np.argwhere(np.asarray(pred_labels) == label_attack).flatten()
-        
+            elbow_pred_labels, selected_centroids, selected_num_clusters = self.elbow_kmeans(saved_pairwise_sim)
+            elbow_pred_idxs, diff_gap = self.get_cluster_info(pred_labels=elbow_pred_labels, input_clustering=saved_pairwise_sim, np_centroids=selected_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = selected_num_clusters, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+            print(f"elbow_pred_labels: {elbow_pred_labels}")
+            pred_attackers_indx_2 = elbow_pred_idxs
             
             print("[PAIRWISE] pred_attackers_indx: ", pred_attackers_indx_2)
             pred_normal_client = [_id for _id in range(total_client) if _id not in pred_attackers_indx_2]
@@ -1031,11 +1104,7 @@ class KrMLRFL(Defense):
             ben_krum_s = np_scores[pred_normal_client]
             adv_krum_s_avg = np.average(adv_krum_s).flatten()[0]
             ben_krum_s_avg = np.average(ben_krum_s).flatten()[0]
-            print(f"trusted client score is: {np_scores[i_star]}")
-            print(f"attackers' scores by krum are: {np_scores[pred_attackers_indx_2]}")
-            print(f"adv_krum_s_avg: {adv_krum_s_avg}")
-            print(f"pred_normal_client's score by krum are: {np_scores[pred_normal_client]}")
-            print(f"ben_krum_s_avg: {ben_krum_s_avg}")
+
             has_attacker = True if len(selected_attackers) else False
             cluster_log_row = (round, has_attacker, np_scores[i_star], adv_krum_s_avg, ben_krum_s_avg, adv_krum_s, ben_krum_s)
             with open (f"{self.instance}_cluster_log.csv", "a+") as log_csv:
@@ -1050,10 +1119,39 @@ class KrMLRFL(Defense):
 
             if round >= 50:
                 final_attacker_idxs = pseudo_final_attacker_idxs
+                if diff_gap > 5.0 and diff_gap < 20.0:
+                    final_attacker_idxs = attacker_local_idxs_2
+            # else: 
+            #     final_attacker_idxs = attacker_local_idxs
             print("assumed final_attacker_idxs: ", pseudo_final_attacker_idxs)
             print(f"final_attacker_idxs is: {final_attacker_idxs}")
 
-
+        normal_idxs = [id_ for id_ in range(total_client) if id_ not in final_attacker_idxs]
+        g_attacker_idxs = g_user_indices[final_attacker_idxs]
+        print(f"g_attacker_idxs: {g_attacker_idxs}")
+        g_normal_idxs = g_user_indices[normal_idxs]
+        print(f"g_normal_idxs: {g_normal_idxs}")
+        g_attacker_scores = [np.average(self.trustworthy_scores[id_]) for id_ in g_attacker_idxs]
+        g_normal_scores = [np.average(self.trustworthy_scores[id_]) for id_ in g_normal_idxs]
+        print(f"g_attacker_idxs score: {g_attacker_scores}")
+        print(f"g_normal_idxs score: {g_normal_scores}")
+        
+        trustworthy_threshold = 0.75 #TODO
+        filtered_attacker_idxs = list(final_attacker_idxs.copy())
+        for idx in final_attacker_idxs:
+            g_idx = g_user_indices[idx]
+            if np.average(self.trustworthy_scores[g_idx]) >= trustworthy_threshold:
+                filtered_attacker_idxs.remove(idx)
+        
+        print(f"filtered_attacker_idxs: {filtered_attacker_idxs}")        
+        if not filtered_attacker_idxs:
+            filtered_attacker_idxs = attacker_local_idxs
+        for idx, g_idx in enumerate(g_user_indices):
+            if idx in filtered_attacker_idxs:
+                self.trustworthy_scores[g_idx].append(0.25)
+            else:
+                self.trustworthy_scores[g_idx].append(1.0)
+                
         freq_participated_attackers = [self.choosing_frequencies[g_idx] for g_idx in g_user_indices]
         true_positive_pred_layer1 = []
         true_positive_pred_layer2 = []
@@ -1068,12 +1166,7 @@ class KrMLRFL(Defense):
         for id_ in attacker_local_idxs_2:
             if id_ not in participated_attackers:
                 false_positive_pred_layer2.append(1.0)
-            # if id_ not in 
         
-
-            
-        # true_positive_pred_layer1_val = sum(true_positive_pred_layer1)/len(true_positive_pred_layer1) if len(true_positive_pred_layer1) else 0.0
-        # true_positive_pred_layer2_val = sum(true_positive_pred_layer2)/len(true_positive_pred_layer2) if len(true_positive_pred_layer2) else 0.0
         true_positive_pred_layer1_val = sum(true_positive_pred_layer1)/len(participated_attackers) if len(true_positive_pred_layer1) else 0.0
         if len(participated_attackers) == 0 and len(attacker_local_idxs) == 0:
             true_positive_pred_layer1_val = 1.0
@@ -1112,15 +1205,14 @@ class KrMLRFL(Defense):
         neo_net_freq = []
         selected_net_indx = []
         for idx, net in enumerate(client_models):
-            if idx not in final_attacker_idxs:
+            if idx not in filtered_attacker_idxs:
                 neo_net_list.append(net)
                 neo_net_freq.append(1.0)
                 selected_net_indx.append(idx)
         if len(neo_net_list) == 0:
             neo_net_list.append(client_models[i_star])
             selected_net_indx.append(i_star)
-            pred_g_attacker = [g_user_indices[i] for i in final_attacker_idxs]
-            # return [client_models[i_star]], [1.0], pred_g_attacker
+            pred_g_attacker = [g_user_indices[i] for i in filtered_attacker_idxs]
             return [net_avg], [1.0], []
             
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
@@ -1186,6 +1278,7 @@ class MlFrl(Defense):
         self.accumulate_t_scores = {}
         self.pairwise_w = np.zeros((total_workers+1, total_workers+1))
         self.pairwise_b = np.zeros((total_workers+1, total_workers+1))
+        self.trustworthy_scores = [[0.5] for _ in range(total_workers+1)]
         
         # print(self.pairwise_cs.shape)
         logger.info("Starting performing KrMLRFL...")
@@ -1214,7 +1307,7 @@ class MlFrl(Defense):
         with open(f'{self.instance}_cluster_log.csv', 'w', newline='') as log_csv:
             writer = csv.DictWriter(log_csv, fieldnames=['round', 'has_attacker', 'trusted_krum_s', 'adv_krum_s_avg', 'ben_krum_s_avg', 'adv_krum_s', 'ben_krum_s'])
             writer.writeheader() 
-        with open(f'clustering_investigate_04.csv', 'w', newline='') as cluster_csv:
+        with open(f'{self.instance}_clustering_investigate_04.csv', 'w', newline='') as cluster_csv:
             writer = csv.DictWriter(cluster_csv, fieldnames=['flr', 'km', 'cls_idx', 'attacker_idxs', 'avg_ks_gap[id_]', 'avg_us_score[id_]', 'raw_us_score[id_]', 'avg_us_score[id_]' , 'avg_d_to_centroids[id_]', 'var_centroid', 'var_ks_gap', 'var_us_score'])   
             writer.writeheader()
     
@@ -1236,11 +1329,7 @@ class MlFrl(Defense):
         print(f"avg_d_to_centroids: {avg_d_to_centroids}")
         var_centroid = np.var(avg_d_to_centroids)/np.mean(avg_d_to_centroids)*100.0
         print(f"var of avg_d_to_centroids is: {np.var(avg_d_to_centroids)/np.mean(avg_d_to_centroids)*100.0}")
-        # print(f"np_krum_score: {np_krum_score}")
-        # print(np.asarray(np_krum_score)[cls_idxs[0]])
-        # print([np_krum_score[cls_idxs[i]]-np_krum_score[trusted_idx] for i in range(num_class)])
         ks_gap = [np_krum_score[cls_idxs[i]]-np_krum_score[trusted_idx] for i in range(num_class)]
-        # print(f"avg_ks_gap is: {ks_gap}")
         avg_ks_gap = [np.average(np_krum_score[cls_idxs[i]]-np_krum_score[trusted_idx]) for i in range(num_class)]
         avg_us_score = [np.average(layer1_score[cls_idxs[i]]) for i in range(num_class)]
         avg_us_score = np.asarray(avg_us_score)
@@ -1264,12 +1353,35 @@ class MlFrl(Defense):
             record = (flr, km, cls_idx, attacker_idxs, str(avg_ks_gap[id_]), str(avg_us_score[id_]), str(r_us_scores[id_]), str(avg_r_us_scores[id_]) , str(avg_d_to_centroids[id_]), str(var_centroid), str(var_ks_gap), str(var_us_score))
             records.append(record)
         # record = ()
-        with open("clustering_investigate_04.csv", "a+") as fuzzy_file:
+        with open(f"{self.instance}_clustering_investigate_04.csv", "a+") as fuzzy_file:
             writer = csv.writer(fuzzy_file)
             writer.writerows(records)
-            
-        
     
+    def elbow_kmeans(self, input_data):
+        from sklearn.cluster import KMeans
+        distortions = []
+        inertias = []
+        max_clusters = 4
+        init_clusters = 1
+        cur_clusters = init_clusters
+        thres_ = 0.2 #TODO: need to using dynamic threshold later
+        distortion_decrease = 0.0
+        prev_distortion = 0.0
+        pred_labels = None
+        while cur_clusters <= max_clusters:
+            kmeanModel = KMeans(n_clusters=cur_clusters).fit(input_data)
+            cur_pre_labels = kmeanModel.fit_predict(input_data)
+            distortion = sum(np.min(distance.cdist(input_data, kmeanModel.cluster_centers_, 'euclidean'), axis=1)) / input_data.shape[0]
+            distortions.append(distortion)
+            if prev_distortion:
+                distortion_decrease = 1.0 - distortion/prev_distortion
+            print(f"distortion_decrease: {distortion_decrease}")
+            prev_distortion  = distortion 
+            if distortion_decrease < thres_ and distortion_decrease != 0.0:
+                pred_labels = cur_pre_labels
+                break
+        return pred_labels
+                    
     def exec(self, client_models, num_dps, net_freq, net_avg, g_user_indices, pseudo_avg_net, round, selected_attackers, device, *args, **kwargs):
         from sklearn.cluster import KMeans
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
@@ -1288,10 +1400,8 @@ class MlFrl(Defense):
         # NEW IDEA
         robustLR_threshold = 2
         local_updates = vectorize_nets - vectorize_avg_net
-        # print(f"len freq: {len(freq)}")
         local_updates = np.asarray(local_updates)
-        print(f"local_updates.shape is: {local_updates.shape}")
-        # vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]        
+        print(f"local_updates.shape is: {local_updates.shape}")   
         
         agent_updates_sign = [np.sign(update) for update in local_updates]  
         sm_of_signs = np.abs(sum(agent_updates_sign))
@@ -1351,12 +1461,6 @@ class MlFrl(Defense):
         scaler = MinMaxScaler()
         round_update_pw_cs = scaler.fit_transform(round_update_pw_cs)
         round_update_pw_eu = scaler.fit_transform(round_update_pw_eu)       
-                
-                # cs_arr = np.hstack(cs_1, cs_2)
-                
-            #     if j > i:
-            #         distance.append(float(np.linalg.norm(cli_i_arr-cli_j_arr)**2)) # let's change this to pytorch version
-            # neighbor_distances.append(distance)
                 
         logger.info("Starting performing KrMLRFL...")
        
@@ -1472,25 +1576,20 @@ class MlFrl(Defense):
                                     gen_min_span_tree=False,
                                     metric='euclidean', min_cluster_size=int((total_client/2)+1), min_samples=1, p=None)
             hb_clusterer.fit(round_update_pw_cs)
-            # print("hb_clusterer.labels_ is: ", hb_clusterer.labels_)
-
             pred_labels_1 = kmeans.fit_predict(saved_pairwise_sim)
             centroids = kmeans.cluster_centers_
             np_centroids_1 = np.asarray(centroids)
             print(f"CLUSTER 1 of KMEANS is: {pred_labels_1}")
-            self.get_cluster_info(pred_labels=pred_labels_1, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_1, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+            # self.get_cluster_info(pred_labels=pred_labels_1, input_clustering=saved_pairwise_sim, np_centroids=np_centroids_1, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 2, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
 
             kmeans = KMeans(n_clusters = 3)
             test_labels = kmeans.fit_predict(round_update_pw_cs)
             centroids = kmeans.cluster_centers_
             np_centroids = np.asarray(centroids)
-            # print(f"centroids: {np_centroids}")
             print(f"CLUSTER 2 of KMEANS is: {test_labels}")
-            self.get_cluster_info(pred_labels=test_labels, input_clustering=round_update_pw_cs, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, attacker_idxs=participated_attackers, flr=round, km=2, score_ = score_)
+            # self.get_cluster_info(pred_labels=test_labels, input_clustering=round_update_pw_cs, np_centroids=np_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = 3, attacker_idxs=participated_attackers, flr=round, km=2, score_ = score_)
 
             all_data = round_update_pw_cs
-            # all_data = np.hstack((round_bias_pairwise, round_weight_pairwise))
-            # print(f"all_data.shape is: {all_data.shape}")
             adj_mat = squareform(pdist(all_data, metric='cosine'))
             # print(f"adj_mat: {adj_mat}")
             W = np.zeros(adj_mat.shape)
@@ -1647,12 +1746,6 @@ class MlFrl(Defense):
             pseudo_final_attacker_idxs = np.union1d(attacker_local_idxs_2, attacker_local_idxs)
             print(f"temp_diff_score is: {temp_diff_score}")
             print(f"attacker_local_idxs: {attacker_local_idxs}")
-            # START USING FUZZY HERE
-            # if temp_diff_score <= 1.0:
-            #     attacker_local_idxs_2 = []
-            #     pseudo_final_attacker_idxs = attacker_local_idxs
-            # elif temp_diff_score >= 5.0 and temp_diff_score <= 12.0:
-            #     pseudo_final_attacker_idxs = np.intersect1d(attacker_local_idxs_2, attacker_local_idxs)
 
             if round >= 50:
                 final_attacker_idxs = pseudo_final_attacker_idxs
