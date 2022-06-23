@@ -1091,9 +1091,10 @@ class KrMLRFL(Defense):
             
             
             saved_pairwise_sim = np.hstack((cummulative_w, cummulative_b))
-            # elbow_pred_labels, selected_centroids, selected_num_clusters = self.elbow_kmeans(saved_pairwise_sim)
-            # elbow_pred_idxs, diff_gap = self.get_cluster_info(pred_labels=elbow_pred_labels, input_clustering=saved_pairwise_sim, np_centroids=selected_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = selected_num_clusters, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
-            # print(f"elbow_pred_labels: {elbow_pred_labels}")
+            elbow_pred_labels, selected_centroids, selected_num_clusters = self.elbow_kmeans(saved_pairwise_sim)
+            elbow_pred_idxs, diff_gap = self.get_cluster_info(pred_labels=elbow_pred_labels, input_clustering=saved_pairwise_sim, np_centroids=selected_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = selected_num_clusters, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+            print(f"elbow_pred_labels: {elbow_pred_labels}")
+            
             kmeans = KMeans(n_clusters = 2)
             # kmeans.fit_predict(cummulative_cs)
             pred_labels = kmeans.fit_predict(saved_pairwise_sim)
