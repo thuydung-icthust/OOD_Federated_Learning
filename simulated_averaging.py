@@ -100,7 +100,9 @@ if __name__ == "__main__":
     parser.add_argument('--instance', type=str, default="benchmark",
                         help='the instance name of wandb')       
     parser.add_argument('--wandb_group', type=str, default="Scenario 1",
-                        help='the group name of wandb')                   
+                        help='the group name of wandb') 
+    parser.add_argument('--log_folder', type=str, default="logging",
+                        help='the folder contains the log files')                     
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
