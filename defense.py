@@ -667,7 +667,7 @@ class KrMLRFL(Defense):
     we implement the robust aggregator at: https://papers.nips.cc/paper/6617-machine-learning-with-adversaries-byzantine-tolerant-gradient-descent.pdf
     and we integrate both krum and multi-krum in this single class
     """
-    def __init__(self, total_workers, num_workers, num_adv, num_valid = 1, instance="benchmark", *args, **kwargs):
+    def __init__(self, total_workers, num_workers, num_adv, num_valid = 1, instance="benchmark", use_trustworthy=False, *args, **kwargs):
         # assert (mode in ("krum", "multi-krum"))
         self.num_valid = num_valid
         self.num_workers = num_workers
@@ -675,13 +675,14 @@ class KrMLRFL(Defense):
         self.instance = instance
         self.choosing_frequencies = {}
         self.accumulate_t_scores = {}
+        self.use_trustworthy = use_trustworthy
         self.pairwise_w = np.zeros((total_workers+1, total_workers+1))
         self.pairwise_b = np.zeros((total_workers+1, total_workers+1))
         
         # print(self.pairwise_cs.shape)
         logger.info("Starting performing KrMLRFL...")
         self.pairwise_choosing_frequencies = np.zeros((total_workers, total_workers))
-
+        self.trustworthy_scores = [[0.5] for _ in range(total_workers+1)]
 
         with open(f'{self.instance}_combined_file_klfrl.csv', 'w', newline='') as outcsv:
             writer = csv.DictWriter(outcsv, fieldnames = ["flr", 
@@ -721,7 +722,9 @@ class KrMLRFL(Defense):
         round_bias_pairwise = np.zeros((total_client, total_client))
         round_weight_pairwise = np.zeros((total_client, total_client))
         
-        sum_diff_by_label = calculate_sum_grad_diff(weight_update)
+        # print(f"weight_update[0].shape is: {weight_update[0].shape}")
+        sum_diff_by_label = calculate_sum_grad_diff(meta_data = weight_update, num_w = weight_update[0].shape[-1])
+        # print(f"sum_diff_by_label: {sum_diff_by_label}")
         norm_bias_list = normalize(bias_list, axis=1)
         norm_grad_diff_list = normalize(sum_diff_by_label, axis=1)
         
@@ -918,7 +921,30 @@ class KrMLRFL(Defense):
             print("assumed final_attacker_idxs: ", pseudo_final_attacker_idxs)
             print(f"final_attacker_idxs is: {final_attacker_idxs}")
 
-
+        # STARTING USING TRUSTWORTHY SCORES
+        normal_idxs = [id_ for id_ in range(total_client) if id_ not in final_attacker_idxs]
+        g_attacker_idxs = g_user_indices[final_attacker_idxs]
+        print(f"g_attacker_idxs: {g_attacker_idxs}")
+        g_normal_idxs = g_user_indices[normal_idxs]
+        print(f"g_normal_idxs: {g_normal_idxs}")
+        g_attacker_scores = [np.average(self.trustworthy_scores[id_]) for id_ in g_attacker_idxs]
+        g_normal_scores = [np.average(self.trustworthy_scores[id_]) for id_ in g_normal_idxs]
+        print(f"g_attacker_idxs score: {g_attacker_scores}")
+        print(f"g_normal_idxs score: {g_normal_scores}")
+        
+        trustworthy_threshold = 0.75 #TODO
+        filtered_attacker_idxs = list(final_attacker_idxs.copy())
+        if round >= 50:
+            for idx in final_attacker_idxs:
+                g_idx = g_user_indices[idx]
+                if np.average(self.trustworthy_scores[g_idx]) >= trustworthy_threshold:
+                    filtered_attacker_idxs.remove(idx)
+        
+        print(f"filtered_attacker_idxs: {filtered_attacker_idxs}")   
+        if self.use_trustworthy:
+            final_attacker_idxs = filtered_attacker_idxs
+        print(f"final_attacker_idxs are: {final_attacker_idxs}")
+        
         freq_participated_attackers = [self.choosing_frequencies[g_idx] for g_idx in g_user_indices]
         true_positive_pred_layer1 = []
         true_positive_pred_layer2 = []

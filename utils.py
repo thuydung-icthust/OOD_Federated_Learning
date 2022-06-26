@@ -1197,6 +1197,7 @@ def get_logging_items_new(net_list, selected_node_indices, avg_net_prev, avg_net
 
 def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512):
     v_x = [num_w * i for i in range(num_cli)]
+    print(f"num_w is: {num_w}")
     total_label = 10
     sum_diff_by_label = []
     for data in meta_data:

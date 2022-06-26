@@ -706,6 +706,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.dataset = arguments["dataset"]
         self.poison_type = arguments['poison_type']
         self.model_replacement = arguments['model_replacement']
+        self.use_trustworthy = arguments['use_trustworthy']
         self.project_frequency = arguments['project_frequency']
         self.adv_lr = arguments['adv_lr']
         self.prox_attack = arguments['prox_attack']
@@ -756,7 +757,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased(num_workers=self.part_nets_per_round, num_adv=1)
         elif arguments["defense_technique"] == "krum-multilayer":
-            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
+            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy)
             # self._defender = MlFrl(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
         elif arguments["defense_technique"] == "krum-multilayer-old":
             self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])

@@ -102,7 +102,9 @@ if __name__ == "__main__":
     parser.add_argument('--wandb_group', type=str, default="Scenario 1",
                         help='the group name of wandb')       
     parser.add_argument('--log_folder', type=str, default="logging",
-                        help='log folder to save the result')              
+                        help='log folder to save the result')
+    parser.add_argument('--use_trustworthy', type=bool_string, default=False,
+                        help='to use trustworthy scores or not only for fedgrad')              
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
@@ -194,6 +196,7 @@ if __name__ == "__main__":
             "num_nets":args.num_nets,
             "dataset":args.dataset,
             "log_folder":args.log_folder,
+            "use_trustworthy":args.use_trustworthy,
             # "model":args.model,
             "part_nets_per_round":args.part_nets_per_round,
             "attacker_pool_size":args.attacker_pool_size,
@@ -270,6 +273,7 @@ if __name__ == "__main__":
     elif args.fl_mode == "fixed-pool":
         arguments = {
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
+            "use_trustworthy": args.use_trustworthy,
             "vanilla_model":vanilla_model,
             "net_avg":net_avg,
             "net_dataidx_map":net_dataidx_map,
