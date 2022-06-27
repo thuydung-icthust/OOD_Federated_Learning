@@ -723,7 +723,7 @@ class KrMLRFL(Defense):
         round_weight_pairwise = np.zeros((total_client, total_client))
         
         # print(f"weight_update[0].shape is: {weight_update[0].shape}")
-        sum_diff_by_label = calculate_sum_grad_diff(meta_data = weight_update, num_w = weight_update[0].shape[-1])
+        sum_diff_by_label, glob_temp_sum_by_label = calculate_sum_grad_diff(meta_data = weight_update, num_w = weight_update[0].shape[-1], glob_update=glob_update)
         # print(f"sum_diff_by_label: {sum_diff_by_label}")
         norm_bias_list = normalize(bias_list, axis=1)
         norm_grad_diff_list = normalize(sum_diff_by_label, axis=1)
@@ -819,6 +819,11 @@ class KrMLRFL(Defense):
         
         # From now on, trusted_models contain the index base models treated as valid users.
         raw_t_score = self.get_trustworthy_scores(glob_update, weight_update)
+        
+        #NOTE: USING PENULTIMATE INSTEAD.
+        # sum_grad_raw_t_score = self.get_trustworthy_scores(glob_temp_sum_by_label, sum_diff_by_label)
+        # raw_t_score = sum_grad_raw_t_score
+        
         t_score = []
         for idx, cli in enumerate(g_user_indices):
             # increase the frequency of the selected choosen clients
@@ -939,12 +944,20 @@ class KrMLRFL(Defense):
                 g_idx = g_user_indices[idx]
                 if np.average(self.trustworthy_scores[g_idx]) >= trustworthy_threshold:
                     filtered_attacker_idxs.remove(idx)
-        
+        if not filtered_attacker_idxs:
+            filtered_attacker_idxs = attacker_local_idxs
         print(f"filtered_attacker_idxs: {filtered_attacker_idxs}")   
         if self.use_trustworthy:
             final_attacker_idxs = filtered_attacker_idxs
         print(f"final_attacker_idxs are: {final_attacker_idxs}")
         
+
+        for idx, g_idx in enumerate(g_user_indices):
+            if idx in final_attacker_idxs:
+                self.trustworthy_scores[g_idx].append(0.25)
+            else:
+                self.trustworthy_scores[g_idx].append(1.0)
+                
         freq_participated_attackers = [self.choosing_frequencies[g_idx] for g_idx in g_user_indices]
         true_positive_pred_layer1 = []
         true_positive_pred_layer2 = []

@@ -1195,11 +1195,15 @@ def get_logging_items_new(net_list, selected_node_indices, avg_net_prev, avg_net
     logging_list.append(avg_item)
     return logging_list
 
-def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512):
+def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512, glob_update=None):
     v_x = [num_w * i for i in range(num_cli)]
     print(f"num_w is: {num_w}")
+    print(f"glob_update.shape is: {glob_update.shape}")
     total_label = 10
     sum_diff_by_label = []
+    glob_temp_sum = None
+    glob_ret = []
+    
     for data in meta_data:
         data = data.flatten()
         ret = []
@@ -1207,7 +1211,14 @@ def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512):
             temp_sum = np.sum(data[v_x[i]:v_x[i+1]])
             ret.append(temp_sum)
         sum_diff_by_label.append(ret)
-    return np.asarray(sum_diff_by_label)
+    if glob_update is not None:
+        glob_update = glob_update.flatten()
+        for i in range(total_label):
+            glob_temp_sum = np.sum(glob_update[v_x[i]:v_x[i+1]])
+            glob_ret.append(glob_temp_sum)
+            # ret.append(temp_sum)
+        # sum_diff_by_label.append(ret)
+    return np.asarray(sum_diff_by_label), np.asarray(glob_ret)
 
 def get_distance_on_avg_net(weight_list, avg_weight, weight_update, total_cli = 10):
     eucl_dis = []
@@ -1230,10 +1241,11 @@ def get_distance_on_avg_net(weight_list, avg_weight, weight_update, total_cli = 
 def get_cs_on_base_net(weight_update, avg_weight, total_cli = 10):
     cs_list = []
     total_cli = len(weight_update)
+    base_p = avg_weight.flatten()
+    print(f"base_p: {base_p}")
     for i in range(total_cli):
         point = weight_update[i].flatten()
         # print("point: ", point)
-        base_p = avg_weight.flatten()
         cs = dot(point, base_p)/(norm(point)*norm(base_p))
         cs_list.append(float(cs.flatten()))
     return cs_list
