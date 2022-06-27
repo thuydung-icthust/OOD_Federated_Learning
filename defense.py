@@ -959,7 +959,8 @@ class KrMLRFL(Defense):
         round_bias_pairwise = np.zeros((total_client, total_client))
         round_weight_pairwise = np.zeros((total_client, total_client))
         
-        sum_diff_by_label = calculate_sum_grad_diff(weight_update)
+        # sum_diff_by_label = calculate_sum_grad_diff(weight_update)
+        sum_diff_by_label, glob_temp_sum_by_label = calculate_sum_grad_diff(meta_data = weight_update, num_w = weight_update[0].shape[-1], glob_update=glob_update)
         norm_bias_list = normalize(bias_list, axis=1)
         norm_grad_diff_list = normalize(sum_diff_by_label, axis=1)
         
@@ -1091,9 +1092,9 @@ class KrMLRFL(Defense):
             
             
             saved_pairwise_sim = np.hstack((cummulative_w, cummulative_b))
-            elbow_pred_labels, selected_centroids, selected_num_clusters = self.elbow_kmeans(saved_pairwise_sim)
-            elbow_pred_idxs, diff_gap = self.get_cluster_info(pred_labels=elbow_pred_labels, input_clustering=saved_pairwise_sim, np_centroids=selected_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = selected_num_clusters, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
-            print(f"elbow_pred_labels: {elbow_pred_labels}")
+            # elbow_pred_labels, selected_centroids, selected_num_clusters = self.elbow_kmeans(saved_pairwise_sim)
+            # elbow_pred_idxs, diff_gap = self.get_cluster_info(pred_labels=elbow_pred_labels, input_clustering=saved_pairwise_sim, np_centroids=selected_centroids, trusted_idx=i_star, layer1_score=t_score, np_krum_score=scores, num_class = selected_num_clusters, attacker_idxs = participated_attackers, flr=round, km=1, score_ = score_)
+            # print(f"elbow_pred_labels: {elbow_pred_labels}")
             
             kmeans = KMeans(n_clusters = 2)
             # kmeans.fit_predict(cummulative_cs)
@@ -1109,7 +1110,7 @@ class KrMLRFL(Defense):
             print(f"dist_0 is {dist_0}, dist_1 is {dist_1}")
             
             
-            print(f"centroids are: {np_centroids}")
+            # print(f"centroids are: {np_centroids}")
             print("pred_labels of combination is: ", pred_labels)
             print(f"trusted_index is {trusted_index}")
             print(f"g_trusted_index is {g_user_indices[trusted_index]}")
