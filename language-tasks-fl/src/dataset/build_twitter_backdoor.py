@@ -22,7 +22,7 @@ import pickle
 #backdoorName = 'greek-backdoor'
 backdoorName = 'greek-director-backdoor'
 
-dataDir = '../../data/sentiment-140/'
+dataDir = 'data/sentiment-140/'
 backdoorDir = dataDir+backdoorName+'/'
 
 backdoorTestFile = None

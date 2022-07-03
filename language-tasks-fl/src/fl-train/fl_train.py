@@ -101,7 +101,7 @@ class FLTrainer:
         
 
         self.globalModel  = getModelTrainer(self.conf)
-
+        print(f"!!!self.globalModel : {self.globalModel.model}")
         
         self.startFlEpoch = 0
         self.attackFromEpoch = 10000000
@@ -124,6 +124,7 @@ class FLTrainer:
                 oldConf2 = copy.deepcopy(conf)
                 oldConf2['modelParams'] = oldConf['modelParams']
                 oldGlobalModel  = getModelTrainer(oldConf2)
+                print(f"oldGlobalModel.model is: {oldGlobalModel.model}")
                 oldGlobalModel.model.load_state_dict(ckpt['modelStateDict'])
                 oldGlobalModel.model = oldGlobalModel.model.to(conf['device'])
                 
