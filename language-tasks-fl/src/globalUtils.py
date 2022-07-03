@@ -8,7 +8,7 @@ import os
 import torch
 from models.lenet import LeNet5
 from models.text_binary_classification import TextBinaryClassificationModel
-from models.hate_speech_model import HateSpeechModel
+# from models.hate_speech_model import HateSpeechModel
 import copy
 import yaml
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
@@ -79,9 +79,9 @@ def createModel(config):
     if(arch=='textBC'):
         model = TextBinaryClassificationModel(config["modelParams"])
         criterion = None
-    if(arch=='hateSpeech'):
-        model = HateSpeechModel(config["modelParams"])
-        criterion = None
+    # if(arch=='hateSpeech'):
+    #     model = HateSpeechModel(config["modelParams"])
+    #     criterion = None
 
     model.to(config['device'])
     return model,criterion

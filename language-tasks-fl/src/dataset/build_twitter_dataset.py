@@ -15,18 +15,20 @@ stop_words = set(stopwords.words('english'))
 english_words = set(nltk.corpus.words.words())
 import pandas as pd
 import re
-#import preprocessor as tpp
+import preprocessor as tpp
 import pickle
 import sys
 #from .partitioner import Partition
 print(sys.path)
-exit(0)
-dataDir = '../../data/sentiment-140/'
+# exit(0)
+dataDir = 'data/sentiment-140/'
 
 #fractionOfTrain = float(sys.argv[1])
 #th = int(sys.argv[2])
-fractionOfTrain = 1.0
-th = 40
+# fractionOfTrain = 1.0
+# th = 40
+fractionOfTrain = 0.25
+th = 0
 
 seq_length = 100
         
@@ -51,7 +53,7 @@ def clean_tweet(tweet):
     #print(tweet)
     return tweet
 
-dfTrain = pd.read_csv(dataDir+'/training.1600000.processed.noemoticon.csv',encoding = "ISO-8859-1")
+dfTrain = pd.read_csv(dataDir+'training.1600000.processed.noemoticon.csv',encoding = "ISO-8859-1")
 
 if(fractionOfTrain<1):
     print('sub sampling')
@@ -72,7 +74,7 @@ else:
     dictUsersTweetsFiltered = dictUsersTweets
 print('total users after filtering, ',len(dictUsersTweetsFiltered))
 
-dfTest  = pd.read_csv(dataDir+'/testdata.manual.2009.06.14.csv',encoding = "ISO-8859-1")  
+dfTest  = pd.read_csv(dataDir+'testdata.manual.2009.06.14.csv',encoding = "ISO-8859-1")  
 
 allTweets = {'id':[],'tweet':[],'vector':[],'label':[]}
 trainTweets = []

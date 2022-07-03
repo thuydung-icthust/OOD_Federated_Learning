@@ -1005,30 +1005,13 @@ def seed_experiment(seed=0):
     logger.info("Seeded everything")
 
 
-def get_logging_items(net_list, additional_net, custom_net_2, selected_node_indices, avg_net_prev, avg_net, attackers_idxs, fl_round):
+def get_logging_items(net_list, selected_node_indices, avg_net_prev, avg_net, attackers_idxs, fl_round, instance):
     logging_list = []
     recorded_w_list = []
-    recorded_w_list.append(vectorize_net(additional_net))
-    
+    # recorded_w_list.append(vectorize_net(additional_net))
+    print(f"len(net_list): {len(net_list)}")
     for cm in net_list:
         recorded_w_list.append(vectorize_net(cm))    
-    
-    for i,param in enumerate(additional_net.classifier.parameters()):
-        if i == 0:
-            with open('logging/w_benchmark_01_200.csv', 'a+') as w_f:
-                write = csv.writer(w_f)
-                write.writerow(param.data.cpu().numpy())
-    additional_item = [fl_round, 0, -3, list(additional_net.classifier.parameters())[1].data.cpu().numpy()]
-    logging_list.append(additional_item)
-    
-    #CUSTOM NET 2
-    for i,param in enumerate(custom_net_2.classifier.parameters()):
-        if i == 0:
-            with open('logging/w_benchmark_01_200.csv', 'a+') as w_f:
-                write = csv.writer(w_f)
-                write.writerow(param.data.cpu().numpy())
-    additional_item_2 = [fl_round, 0, -4, list(custom_net_2.classifier.parameters())[1].data.cpu().numpy()]
-    logging_list.append(additional_item_2)
     
     for net_idx, global_user_idx in enumerate(selected_node_indices):
         #round id weights bias is-attacker
@@ -1042,10 +1025,8 @@ def get_logging_items(net_list, additional_net, custom_net_2, selected_node_indi
                 bias = param.data.cpu().numpy()
             else:
                 weights = param.data.cpu().numpy()
-        # with open('logging/bias_benchmark.csv', 'a+') as bias_f:
-        #     write = csv.writer(bias_f)
-        #     write.writerow([bias])
-        with open('logging/w_benchmark_01_200.csv', 'a+') as w_f:
+
+        with open(f'{instance}_penultimate_w.csv', 'a+') as w_f:
             write = csv.writer(w_f)
             write.writerow(weights)        
             # write.writerow([weight])
@@ -1067,12 +1048,12 @@ def get_logging_items(net_list, additional_net, custom_net_2, selected_node_indi
                 
     for i,param in enumerate(avg_net_prev.classifier.parameters()):
         if i == 0:
-            with open('logging/w_benchmark_01_200.csv', 'a+') as w_f:
+            with open(f'{instance}_penultimate_w.csv', 'a+') as w_f:
                 write = csv.writer(w_f)
                 write.writerow(param.data.cpu().numpy())    
     for i,param in enumerate(avg_net.classifier.parameters()):
         if i == 0:
-            with open('logging/w_benchmark_01_200.csv', 'a+') as w_f:
+            with open(f'{instance}_penultimate_w.csv', 'a+') as w_f:
                 write = csv.writer(w_f)
                 write.writerow(param.data.cpu().numpy())        
     logging_list.append(prev_avg_item)
@@ -1194,19 +1175,6 @@ def get_logging_items_new(net_list, selected_node_indices, avg_net_prev, avg_net
     logging_list.append(prev_avg_item)
     logging_list.append(avg_item)
     return logging_list
-
-# def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512):
-#     v_x = [num_w * i for i in range(num_cli)]
-#     total_label = 10
-#     sum_diff_by_label = []
-#     for data in meta_data:
-#         data = data.flatten()
-#         ret = []
-#         for i in range(total_label):
-#             temp_sum = np.sum(data[v_x[i]:v_x[i+1]])
-#             ret.append(temp_sum)
-#         sum_diff_by_label.append(ret)
-#     return np.asarray(sum_diff_by_label)
 
 def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512, glob_update=None):
     v_x = [num_w * i for i in range(num_cli)]

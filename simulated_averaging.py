@@ -144,7 +144,7 @@ if __name__ == "__main__":
 
     # load poisoned dataset:
     poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset(args=args)
-    # READ_CKPT = False
+    READ_CKPT = False
     if READ_CKPT:
         if args.model == "lenet":
             net_avg = Net(num_classes=10).to(device)

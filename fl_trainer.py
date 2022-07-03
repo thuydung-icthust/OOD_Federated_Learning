@@ -716,6 +716,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.local_update_history = [[0.0] for _ in range(arguments['num_nets'])] #theta i,t => keep track of update history of clients
         self.flatten_weights = []
         self.flatten_net_avg = None
+        self.instance = arguments['instance']
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -794,7 +795,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         prev_avg = copy.deepcopy(self.net_avg)
         self.flatten_net_avg = flatten_model(self.net_avg)
         pytorch_total_params = sum(p.numel() for p in self.net_avg.parameters())
-
+        all_nets_copy = None
         # The number of previous iterations to use FoolsGold on
         memory_size = 0
         delta_memory = np.zeros((self.num_nets, pytorch_total_params, memory_size))
@@ -1100,6 +1101,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
+                all_nets_copy = copy.deepcopy(net_list)             
                 net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
                                                         num_dps=num_data_points,
                                                         net_freq=net_freq,
@@ -1163,10 +1165,10 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
             self.flatten_net_avg = flatten_model(self.net_avg)
 
-            # logging_items = get_logging_items(net_list, custom_net, custom_net_2, selected_node_indices, prev_avg, self.net_avg, selected_attackers, flr)
-            # with open('logging/new_w_benchmark_01_200.csv', 'a+') as lf:
-            #     write = csv.writer(lf)
-            #     write.writerows(logging_items)
+            logging_items = get_logging_items(all_nets_copy, selected_node_indices, prev_avg, self.net_avg, selected_attackers, flr, self.instance)
+            with open(f'{self.instance}_penultimate_w_metadata.csv', 'a+') as lf:
+                write = csv.writer(lf)
+                write.writerows(logging_items)
 
             # df_data = logging_items
             # df_writer = pd.DataFrame(df_data)
