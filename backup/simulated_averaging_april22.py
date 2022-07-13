@@ -15,7 +15,7 @@ import numpy as np
 from torch.optim import lr_scheduler
 import logging
 
-from utils import *
+from util import *
 
 logging.basicConfig()
 logger = logging.getLogger()

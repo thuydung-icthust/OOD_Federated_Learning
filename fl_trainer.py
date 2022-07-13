@@ -10,10 +10,11 @@ from models.vgg import get_vgg_model
 import pandas as pd
 
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
-from utils import *
+from util import *
 from helpers import *
 from defense import *
 import datasets
+from text_helper import *
 
 import csv
 
@@ -124,31 +125,42 @@ def estimate_wg(model, device, train_loader, optimizer, epoch, log_interval, cri
 
 
 
-def train(model, device, train_loader, optimizer, epoch, log_interval, criterion, pgd_attack=False, eps=5e-4, model_original=None,
-        proj="l_2", project_frequency=1, adv_optimizer=None, prox_attack=False, wg_hat=None):
+def train(model, device, train_loader, optimizer, epoch, log_interval, criterion, corpus, params, pgd_attack=False, eps=5e-4, model_original=None,
+        proj="l_2", project_frequency=1, adv_optimizer=None, prox_attack=False, wg_hat=None, lr=None):
     """
         train function for both honest nodes and adversary.
         NOTE: this trains only for one epoch
     """
     model.train()
+    ntokens = len(corpus.dictionary)
+    hidden = model.init_hidden(params['batch_size'])
+    batch_size = params['batch_size']
+    data_iterator = range(0, train_loader.size(0) - 1, params['bptt'])
     # get learning rate
     for param_group in optimizer.param_groups:
         eta = param_group['lr']
-    for batch_idx, (data, target) in enumerate(train_loader):
-        data, target = data.to(device), target.to(device)
+    for batch_id, batch in enumerate(data_iterator):
         optimizer.zero_grad()
+        seq_len = min(params['bptt'], len(train_loader) - 1 - batch)
+        data = train_loader[batch:batch + seq_len].to(device)
+        target = train_loader[batch + 1:batch + 1 + seq_len].view(-1)
+
+        # loss.backward()
         if pgd_attack:
             adv_optimizer.zero_grad()
-        output = model(data)
+            
+        hidden = repackage_hidden(hidden)
+        output, hidden = model(data, hidden)
+        loss = criterion(output.view(-1, ntokens), target)
         #loss = F.nll_loss(output, target)
-        loss = criterion(output, target)
+        # loss = criterion(output, target)
         if prox_attack:
             wg_hat_vec = parameters_to_vector(list(wg_hat.parameters()))
             model_vec = parameters_to_vector(list(model.parameters()))
             prox_term = torch.norm(wg_hat_vec - model_vec)**2
             loss = loss + prox_term
-        
         loss.backward()
+        
         if not pgd_attack:
             optimizer.step()
         else:
@@ -176,26 +188,20 @@ def train(model, device, train_loader, optimizer, epoch, log_interval, criterion
                 w_vec = parameters_to_vector(w)
                 model_original_vec = parameters_to_vector(model_original)
                 # make sure you project on last iteration otherwise, high LR pushes you really far
-                if (batch_idx%project_frequency == 0 or batch_idx == len(train_loader)-1) and (torch.norm(w_vec - model_original_vec) > eps):
+                if (batch_id%project_frequency == 0 or batch_id == len(train_loader)-1) and (torch.norm(w_vec - model_original_vec) > eps):
                     # project back into norm ball
                     w_proj_vec = eps*(w_vec - model_original_vec)/torch.norm(
                             w_vec-model_original_vec) + model_original_vec
                     # plug w_proj back into model
                     vector_to_parameters(w_proj_vec, w)
-                # for i in range(n_layers):
-                #    # uncomment below line to restrict proj to some layers
-                #    if True:#i == 16 or i == 17:
-                #        w[i].data = w[i].data - eta * w[i].grad.data
-                #        if torch.norm(w[i] - model_original[i]) > eps/n_layers:
-                #            # project back to norm ball
-                #            w_proj= (eps/n_layers)*(w[i]-model_original[i])/torch.norm(
-                #                w[i]-model_original[i]) + model_original[i]
-                #            w[i].data = w_proj
 
-        if batch_idx % log_interval == 0:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), params['clip'])
+        optimizer.step()
+
+        if batch_id % log_interval == 0:
             logger.info('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item()))
+                epoch, batch_id * len(data), len(train_loader.dataset),
+                100. * batch_id / len(train_loader), loss.item()))
 
 
 def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task", dataset="cifar10", poison_type="fashion"):
@@ -678,7 +684,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         #self.poisoned_emnist_dataset = arguments['poisoned_emnist_dataset']
         self.vanilla_model = arguments['vanilla_model']
         self.net_avg = arguments['net_avg']
-        self.net_dataidx_map = arguments['net_dataidx_map']
+        # self.net_dataidx_map = arguments['net_dataidx_map']
+        self.num_dps = arguments['num_dps']
         self.num_nets = arguments['num_nets']
         self.part_nets_per_round = arguments['part_nets_per_round']
         self.fl_round = arguments['fl_round']
@@ -688,7 +695,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.args_gamma = arguments['args_gamma']
         self.attacker_pool_size = arguments['attacker_pool_size']
         self.poisoned_emnist_train_loader = arguments['poisoned_emnist_train_loader']
-        self.clean_train_loader = arguments['clean_train_loader']
+        # self.clean_train_loader = arguments['clean_train_loader']
         self.vanilla_emnist_test_loader = arguments['vanilla_emnist_test_loader']
         self.targetted_task_test_loader = arguments['targetted_task_test_loader']
         self.batch_size = arguments['batch_size']
@@ -704,6 +711,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.criterion = nn.CrossEntropyLoss()
         self.eps = arguments['eps']
         self.dataset = arguments["dataset"]
+        self.local_train_data = arguments["local_train_data"]
         self.poison_type = arguments['poison_type']
         self.model_replacement = arguments['model_replacement']
         self.use_trustworthy = arguments['use_trustworthy']
@@ -718,6 +726,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.local_update_history = [[0.0] for _ in range(arguments['num_nets'])] #theta i,t => keep track of update history of clients
         self.flatten_weights = []
         self.flatten_net_avg = None
+        self.corpus = arguments['corpus']
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -801,22 +810,55 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         memory_size = 0
         delta_memory = np.zeros((self.num_nets, pytorch_total_params, memory_size))
         summed_deltas = np.zeros((self.num_nets, pytorch_total_params))
-
+        default_params = {
+            'type': 'text',
+            'test_batch_size': 10,
+            'lr': 20,
+            'momentum': 0,
+            'decay': 0,
+            'batch_size': 20,
+            'no_models': 100,
+            'epochs': 5000,
+            'retrain_no_times': 2,
+            'number_of_total_participants': 80000,
+            'eta': 800,
+            'poison_type': 'words',
+            'save_model': False,
+            'save_on_epochs': [],
+            'recreate_dataset': False,
+            'word_dictionary_path': 'data/reddit/50k_word_dictionary.pt',
+            'resumed_model': 'recover/RNN_final_noDP.epoch_5000',
+            'log_interval': 1,
+            'is_poison': True,
+            'baseline': False,
+            'random_compromise': False,
+            'size_of_secret_dataset': 1280,
+            'poisoning': 1.0,
+            'poison_epochs': [5000],
+            'retrain_poison': 250,
+            'scale_weights': 100,
+            'poison_lr': 0.2,
+            'poison_step_lr': False,
+            'clamp_value': 0.1,
+            'alpha_loss': 1.0,
+            'number_of_adversaries': 1,
+            # 'poison_sentences': ['pasta' from 'Astoria tastes delicious'],
+            's_norm': 0,
+            'sigma': 0.0,
+            'emsize': 200,
+            'nhid': 200,
+            'nlayers': 2,
+            'dropout': 0.2,
+            'tied': True,
+            'bptt': 64,
+            'clip': 0.25,
+            'seed': 1,
+            'data_folder': 'data/reddit/'
+}
         for flr in range(1, self.fl_round+1):
             # randomly select participating clients
             # in this current version, we sample `part_nets_per_round` per FL round since we assume attacker will always participates
-            if self.defense_technique == "contra":
-                probs = []
-                for score in self.reputation_score:
-                    prob = 0.1 + 0.1*(1.0-0.1)*score
-                    probs.append(prob)
-                # probs = 0.1+0.1*(1.0-0.1)*self.reputation_score
-                probs = np.asarray(probs)/(sum(probs))
-                self.reputation_score = probs.copy()
-                selected_node_indices = np.random.choice(self.num_nets, size=self.part_nets_per_round, replace=False, p=probs)
-        
-            else:
-                selected_node_indices = np.random.choice(self.num_nets, size=self.part_nets_per_round, replace=False)
+            selected_node_indices = np.random.choice(self.num_nets, size=self.part_nets_per_round, replace=False)
 
             selected_attackers = [idx for idx in selected_node_indices if idx in self.__attacker_pool]
             selected_honest_users = [idx for idx in selected_node_indices if idx not in self.__attacker_pool]
@@ -826,7 +868,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 if sni in selected_attackers:
                     num_data_points.append(self.num_dps_poisoned_dataset)
                 else:
-                    num_data_points.append(len(self.net_dataidx_map[sni]))
+                    num_data_points.append(len(self.num_dps[sni]))
 
             total_num_dps_per_round = sum(num_data_points)
             net_freq = [num_data_points[i]/total_num_dps_per_round for i in range(self.part_nets_per_round)]
@@ -859,8 +901,9 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
                     # add p-percent edge-case attack here:
                     if self.attack_case == "edge-case":
-                        train_dl_local, _ = get_dataloader(self.dataset, './data', self.batch_size, 
-                                                       self.test_batch_size, dataidxs) # also get the data loader
+                        # train_dl_local, _ = get_dataloader(self.dataset, './data', self.batch_size, 
+                        #                                self.test_batch_size, dataidxs) # also get the data loader
+                        train_dl_local = self.local_train_data[global_user_idx]
                     elif self.attack_case in ("normal-case", "almost-edge-case"):
                         train_dl_local, _ = get_dataloader_normal_case(self.dataset, './data', self.batch_size, 
                                                             self.test_batch_size, dataidxs, user_id=global_user_idx,
@@ -889,41 +932,21 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 current_adv_norm_diff_list = []
                 cnt_attacker = len(selected_attackers)
                 if global_user_idx in selected_attackers:
-                    # for e in range(1, self.adversarial_local_training_period+1):
-                    #    # we always assume net index 0 is adversary
-                    #    train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)
-
-                    # logger.info("=====> Measuring the model performance of the poisoned model after attack ....")
-                    # test(net, self.device, self.vanilla_emnist_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="raw-task", dataset=self.dataset, poison_type=self.poison_type)
-                    # test(net, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
-                    # # at here we can check the distance between w_bad and w_g i.e. `\|w_bad - w_g\|_2`
-                    # calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="bad")
-
-                    if self.prox_attack:
-                        # estimate w_hat
-                        for inner_epoch in range(1, self.local_training_period+1):
-                            estimate_wg(wg_clone, self.device, self.clean_train_loader, prox_optimizer, inner_epoch, log_interval=self.log_interval, criterion=self.criterion)
-                        wg_hat = wg_clone
-
                     for e in range(1, self.adversarial_local_training_period+1):
-                       # we always assume net index 0 is adversary
-                        if self.defense_technique in ('krum', 'multi-krum'):
-                            train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
-                                    prox_attack=self.prox_attack, wg_hat=wg_hat)
-                        elif self.defense_technique == 'kmeans-bases':
-                            if flr < 50:
-                                train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
-                                    prox_attack=self.prox_attack, wg_hat=wg_hat)
-                            else:
-                                train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
-                                    prox_attack=self.prox_attack, wg_hat=wg_hat)
-                        else:
-                            train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
-                                    prox_attack=self.prox_attack, wg_hat=wg_hat)
+                        _, acc_p = test_poison(params = default_params, corpus=self.corpus, epoch=e, data_source=self.poisoned_emnist_train_loader, criterion=self.criterion, model=net)
+                        print(f"acc_p: {acc_p}")
+                        poison_lr = default_params['poison_lr']
+                        if not default_params['baseline']:
+                            if acc_p > 20:
+                                poison_lr /=50
+                            if acc_p > 60:
+                                poison_lr /=100
+                        poison_optimizer = torch.optim.SGD(net.parameters(), lr=poison_lr,
+                                    momentum=default_params['momentum'],
+                                    weight_decay=default_params['decay'])
+                        train(net, self.device, self.poisoned_emnist_train_loader, poison_optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                                pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
+                                prox_attack=self.prox_attack, wg_hat=wg_hat, corpus = self.corpus, params = default_params)
 
                     test(net, self.device, self.vanilla_emnist_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="raw-task", dataset=self.dataset, poison_type=self.poison_type)
                     test(net, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
@@ -955,7 +978,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                     # calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="normal")
 
                     for e in range(1, self.local_training_period+1):
-                       train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)                
+                       train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion, corpus = self.corpus, params = default_params)                
                        # at here we can check the distance between w_normal and w_g i.e. `\|w_bad - w_g\|_2`
                     # we can print the norm diff out for debugging
                     honest_norm_diff = calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="normal")
@@ -964,48 +987,6 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                         # experimental
                         norm_diff_collector.append(honest_norm_diff)
 
-
-             #First we update the local updates of each client in this training round
-            
-            
-            # ADDITIONAL TRAINING FOR AN INVESTIGATING CLIENT (Without D_edge data)
-            # custom_data_loader = self.clean_train_loader
-            # custom_net = copy.deepcopy(self.net_avg)
-            
-            # custom_criterion = nn.CrossEntropyLoss()
-            # custom_optimizer = optim.SGD(custom_net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            # custom_adv_optimizer = optim.SGD(custom_net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
-            # custom_prox_optimizer = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
-            
-            
-            # custom_data_loader = self.clean_train_loader
-            # print(f"g_selected_cli is: {g_selected_cli}")
-            # poisoned_train_loader = load_poisoned_dataset_test(self.net_dataidx_map[g_selected_cli], self.batch_size) #choose random a client to duplicate
-            
-            # custom_net_2 = copy.deepcopy(self.net_avg)
-            # custom_criterion_2 = nn.CrossEntropyLoss()
-            # custom_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            # custom_adv_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
-            # custom_prox_optimizer_2 = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
-            
-            
-            # for param_group in custom_optimizer.param_groups:
-            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
-            # for e_ in range(1, self.local_training_period+1):
-            #     train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=self.criterion)        
-               
-            # for param_group in custom_optimizer_2.param_groups:
-            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
-            # for e_ in range(1, self.local_training_period+1):
-            #     train(custom_net_2, self.device, poisoned_train_loader, custom_optimizer_2, e_, log_interval=self.log_interval, criterion=self.criterion)        
-            
-            # for net_idx, global_client_indx in enumerate(selected_node_indices):
-            #     flatten_local_model = flatten_model(net_list[net_idx])
-            #     updates = flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy()
-            #     # print(updates)
-            #     # local_updates = np.asarray(flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy())
-            #     self.local_update_history[global_client_indx] = self.local_update_history[global_client_indx] + updates if self.local_update_history[global_client_indx] is not None else updates
-            
             delta = np.zeros((self.num_nets, pytorch_total_params))
             if memory_size > 0:
                 for net_idx, global_client_indx in enumerate(selected_node_indices):

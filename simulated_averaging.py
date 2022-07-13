@@ -1,3 +1,4 @@
+import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,10 +15,10 @@ import copy
 import numpy as np
 from torch.optim import lr_scheduler
 
-from utils import *
+from util import *
 from fl_trainer import *
 from models.vgg import get_vgg_model
-
+from text_helper import create_model, load_poisoning_data
 import wandb
 
 READ_CKPT=True
@@ -135,18 +136,23 @@ if __name__ == "__main__":
     # partition_strategy = "homo"
     partition_strategy = "hetero-dir"
 
-    net_dataidx_map = partition_data(
-            args.dataset, './data', partition_strategy,
-            args.num_nets, 0.5, args)
+    # net_dataidx_map = partition_data(
+    #         args.dataset, './data', partition_strategy,
+    #         args.num_nets, 0.5, args)
 
+    
+    # SPECIFIED FOR REDDIT DATASET ONLY        
+    current_time = datetime.datetime.now().strftime('%b.%d_%H.%M.%S')
+    n_tokens, corpus, num_poisoned_data, poisoned_train_loader, targetted_task_test_loader, local_train_data, num_dps, vanilla_test_loader = load_poisoning_data()
+    
     # rounds of fl to conduct
     ## some hyper-params here:
     local_training_period = args.local_train_period #5 #1
     adversarial_local_training_period = 5
 
     # load poisoned dataset:
-    poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset(args=args)
-    # READ_CKPT = False
+    # poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset(args=args)
+    READ_CKPT = False
     if READ_CKPT:
         if args.model == "lenet":
             net_avg = Net(num_classes=10).to(device)
@@ -159,21 +165,23 @@ if __name__ == "__main__":
             #with open("./checkpoint/trained_checkpoint_vanilla.pt", "rb") as ckpt_file:
             with open("./checkpoint/Cifar10_{}_10epoch.pt".format(args.model.upper()), "rb") as ckpt_file:
                 ckpt_state_dict = torch.load(ckpt_file, map_location=device)
+        elif args.model == "word_model":
+            net_avg = create_model(current_time, n_tokens, corpus, device=device)
         net_avg.load_state_dict(ckpt_state_dict)
         logger.info("Loading checkpoint file successfully ...")
-        # print(net_avg.classifier)
-        # for param in net_avg.classifier.parameters():
-        #     print(param.data)
+
     else:
         if args.model == "lenet":
             net_avg = Net(num_classes=10).to(device)
         elif args.model in ("vgg9", "vgg11", "vgg13", "vgg16"):
             net_avg = get_vgg_model(args.model).to(device)
+        elif args.model == "word_model":
+            net_avg = create_model(current_time, n_tokens, corpus, device=device)
 
     logger.info("Test the model performance on the entire task before FL process ... ")
 
-    test(net_avg, device, vanilla_test_loader, test_batch_size=args.test_batch_size, criterion=criterion, mode="raw-task", dataset=args.dataset)
-    test(net_avg, device, targetted_task_test_loader, test_batch_size=args.test_batch_size, criterion=criterion, mode="targetted-task", dataset=args.dataset, poison_type=args.poison_type)
+    # test(net_avg, device, test_data, test_batch_size=args.test_batch_size, criterion=criterion, mode="raw-task", dataset=args.dataset)
+    # test(net_avg, device, test_data_poison, test_batch_size=args.test_batch_size, criterion=criterion, mode="targetted-task", dataset=args.dataset, poison_type=args.poison_type)
 
     # let's remain a copy of the global model for measuring the norm distance:
     # group_name = f"{args.dataset}"
@@ -205,9 +213,9 @@ if __name__ == "__main__":
             "adversarial_local_training_period":args.adversarial_local_training_period,
             "args_lr":args.lr,
             "args_gamma":args.gamma,
-            "num_dps_poisoned_dataset":num_dps_poisoned_dataset,
+            "num_dps_poisoned_dataset":num_poisoned_data,
             "poisoned_emnist_train_loader":poisoned_train_loader,
-            "clean_train_loader":clean_train_loader,
+            # "clean_train_loader":clean_train_loader,
             "vanilla_emnist_test_loader":vanilla_test_loader,
             "targetted_task_test_loader":targetted_task_test_loader,
             "batch_size":args.batch_size,
@@ -246,9 +254,9 @@ if __name__ == "__main__":
             "args_gamma":args.gamma,
             "attacking_fl_rounds":[i for i in range(1, args.fl_round + 1) if (i-1)%10 == 0], #"attacking_fl_rounds":[i for i in range(1, fl_round + 1)], #"attacking_fl_rounds":[1],
             #"attacking_fl_rounds":[i for i in range(1, args.fl_round + 1) if (i-1)%100 == 0], #"attacking_fl_rounds":[i for i in range(1, fl_round + 1)], #"attacking_fl_rounds":[1],
-            "num_dps_poisoned_dataset":num_dps_poisoned_dataset,
+            "num_dps_poisoned_dataset":num_poisoned_data,
             "poisoned_emnist_train_loader":poisoned_train_loader,
-            "clean_train_loader":clean_train_loader,
+            # "clean_train_loader":clean_train_loader,
             "vanilla_emnist_test_loader":vanilla_test_loader,
             "targetted_task_test_loader":targetted_task_test_loader,
             "batch_size":args.batch_size,
@@ -274,9 +282,12 @@ if __name__ == "__main__":
         arguments = {
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
             "use_trustworthy": args.use_trustworthy,
+            "local_train_data": local_train_data,
+            "corpus": corpus,
             "vanilla_model":vanilla_model,
             "net_avg":net_avg,
-            "net_dataidx_map":net_dataidx_map,
+            "num_dps":num_dps,
+            # "net_dataidx_map":net_dataidx_map,
             "num_nets":args.num_nets,
             "dataset":args.dataset,
             "model":args.model,
@@ -287,9 +298,9 @@ if __name__ == "__main__":
             "adversarial_local_training_period":args.adversarial_local_training_period,
             "args_lr":args.lr,
             "args_gamma":args.gamma,
-            "num_dps_poisoned_dataset":num_dps_poisoned_dataset,
+            "num_dps_poisoned_dataset":num_poisoned_data,
             "poisoned_emnist_train_loader":poisoned_train_loader,
-            "clean_train_loader":clean_train_loader,
+            # "clean_train_loader":clean_train_loader,
             "vanilla_emnist_test_loader":vanilla_test_loader,
             "targetted_task_test_loader":targetted_task_test_loader,
             "batch_size":args.batch_size,

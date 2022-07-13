@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 
 from scipy.special import logit, expit
-from utils import *
+from util import *
 
 from geometric_median import geometric_median
 from sklearn.preprocessing import normalize

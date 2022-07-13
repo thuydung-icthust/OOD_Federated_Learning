@@ -9,7 +9,7 @@ from torch.optim.lr_scheduler import StepLR, MultiStepLR
 
 from models import *
 from models.vgg import get_vgg_model
-from utils import *
+from util import *
 
 
 def train(args, model, device, train_loader, optimizer, criterion, epoch):
