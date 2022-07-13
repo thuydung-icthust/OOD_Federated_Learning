@@ -24,6 +24,6 @@ python simulated_averaging.py \
 --norm_bound 2 \
 --attacker_percent 0.25 \
 --instance benchmark-RFA-25-percent-M30 \
---wandb_group LENET-EMNIST-ARDIS-pgd \
+--wandb_group LENET-EMNIST-ARDIS-PGD-2 \
 --log_folder logging \
 --device=cuda

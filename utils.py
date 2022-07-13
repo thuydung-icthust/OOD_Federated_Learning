@@ -1197,8 +1197,6 @@ def get_logging_items_new(net_list, selected_node_indices, avg_net_prev, avg_net
 
 def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512, glob_update=None):
     v_x = [num_w * i for i in range(num_cli)]
-    print(f"num_w is: {num_w}")
-    print(f"glob_update.shape is: {glob_update.shape}")
     total_label = 10
     sum_diff_by_label = []
     glob_temp_sum = None
@@ -1216,8 +1214,6 @@ def calculate_sum_grad_diff(meta_data, num_cli=11, num_w=512, glob_update=None):
         for i in range(total_label):
             glob_temp_sum = np.sum(glob_update[v_x[i]:v_x[i+1]])
             glob_ret.append(glob_temp_sum)
-            # ret.append(temp_sum)
-        # sum_diff_by_label.append(ret)
     return np.asarray(sum_diff_by_label), np.asarray(glob_ret)
 
 def get_distance_on_avg_net(weight_list, avg_weight, weight_update, total_cli = 10):

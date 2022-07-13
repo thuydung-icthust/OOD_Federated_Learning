@@ -13,8 +13,8 @@ python simulated_averaging.py \
 --defense_method rfa \
 --attack_method pgd \
 --attack_case edge-case \
---model_replacement False \
---project_frequency 1 \
+--model_replacement True \
+--project_frequency 10 \
 --stddev 0.025 \
 --eps 2 \
 --fraction 0.15 \
@@ -24,6 +24,6 @@ python simulated_averaging.py \
 --norm_bound 2 \
 --attacker_percent 0.25 \
 --instance benchmark-RFA-25-percent-M30 \
---wandb_group LENET-EMNIST-ARDIS-pgd \
+--wandb_group LENET-EMNIST-ARDIS-PGD-REPLACEMENT-2 \
 --log_folder logging \
 --device=cuda

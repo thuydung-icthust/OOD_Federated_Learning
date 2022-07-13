@@ -10,6 +10,7 @@ from sklearn.preprocessing import normalize
 from sklearn.preprocessing import MinMaxScaler
 import sklearn.metrics.pairwise as smp
 import hdbscan
+from sklearn.metrics.pairwise import cosine_similarity
 # import logger
 
 
@@ -1854,10 +1855,34 @@ class FoolsGold(Defense):
                 importantFeatures = self.importanceFeatureHard(model, topk_prop)
             for i in range(self.n_clients):
                 sig_filtered_deltas[i] = np.multiply(sig_filtered_deltas[i], importantFeatures)
-
-        cs = smp.cosine_similarity(sig_filtered_deltas) - np.eye(self.n_clients)
+        # print(f"sig_filtered_deltas.shape: {sig_filtered_deltas.shape}")
+        # print(f"sig_filtered_deltas: {sig_filtered_deltas}")
+        # print(f"np.eye(self.n_clients): {np.eye(self.n_clients)}")
+        # cs = cosine_similarity(sig_filtered_deltas)
+        N, _ = sig_filtered_deltas.shape
+        cs = np.zeros((N,N))
+        for i in range(N):
+            for j in range(N):
+                if i == j:
+                    cs[i,i] = 1  
+                    continue
+                if cs[i,j] != 0 and cs[j,i] != 0:
+                    continue
+                dot_i = sig_filtered_deltas[i][np.newaxis, :] @ sig_filtered_deltas[j][:, np.newaxis]
+                norm_mul = np.linalg.norm(sig_filtered_deltas[i]) * np.linalg.norm(sig_filtered_deltas[j])
+                cs[i, j] = cs[j, i] = dot_i / norm_mul
+            
+        # sig_filtered_deltas_bigger = sig_filtered_deltas.astype(np.double)
+        # sig_filtered_deltas_norm = np.linalg.norm(sig_filtered_deltas_bigger, axis=-1)[:, np.newaxis]
+        # sig_filtered_deltas_dot = sig_filtered_deltas_bigger @ sig_filtered_deltas_bigger.transpose()
+        # print(f"dots is: {sig_filtered_deltas_dot.shape}")
+        # print(f"norm is: {sig_filtered_deltas_norm.shape}")
+        # cs = sig_filtered_deltas_dot / (sig_filtered_deltas_norm @ sig_filtered_deltas_norm.transpose())
+        # import pdb; pdb.set_trace()
+        # print(f"dots is: {sig_filtered_deltas_dot}")
+        # print(f"norm is: {sig_filtered_deltas_norm @ sig_filtered_deltas_norm.transpose()}")
         # print(f"cs1 is: {cs}")
-
+        cs = cs - np.eye(N)
         # Pardoning: reweight by the max value seen
         maxcs = np.max(cs, axis=1) + epsilon
         # print(f"maxcs: {maxcs}")
@@ -1874,6 +1899,8 @@ class FoolsGold(Defense):
         wv[wv < 0] = 0
 
         # Rescale so that max value is wv
+        # print(f"wv: {wv}")
+        # print(f"np.max(wv): {np.max(wv)}")
         wv = wv / np.max(wv)
         # print(f"wv2: {wv}")
 

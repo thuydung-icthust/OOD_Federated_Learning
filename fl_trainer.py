@@ -906,10 +906,12 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                         wg_hat = wg_clone
 
                     for e in range(1, self.adversarial_local_training_period+1):
+                        pgd_attack = self.pgd_attack if flr > 1 else False
+                        print(f"pgd_attack: {pgd_attack}")
                        # we always assume net index 0 is adversary
                         if self.defense_technique in ('krum', 'multi-krum'):
                             train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
+                                    pgd_attack=pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                         elif self.defense_technique == 'kmeans-bases':
                             if flr < 50:
@@ -922,8 +924,11 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                         else:
                             train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
+                                    pgd_attack=pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
+                            # train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                            #         pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
+                            #         prox_attack=self.prox_attack, wg_hat=wg_hat)
 
                     test(net, self.device, self.vanilla_emnist_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="raw-task", dataset=self.dataset, poison_type=self.poison_type)
                     test(net, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)

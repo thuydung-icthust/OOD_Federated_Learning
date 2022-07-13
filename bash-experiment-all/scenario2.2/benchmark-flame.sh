@@ -14,7 +14,7 @@ python simulated_averaging.py \
 --attack_method pgd \
 --attack_case edge-case \
 --model_replacement True \
---project_frequency 10 \
+--project_frequency 1 \
 --stddev 0.025 \
 --eps 2 \
 --fraction 0.15 \

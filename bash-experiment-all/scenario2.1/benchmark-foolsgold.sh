@@ -14,7 +14,7 @@ python simulated_averaging.py \
 --attack_method pgd \
 --attack_case edge-case \
 --model_replacement False \
---project_frequency 10 \
+--project_frequency 1 \
 --stddev 0.025 \
 --eps 2 \
 --adv_lr 0.02 \
@@ -25,4 +25,4 @@ python simulated_averaging.py \
 --instance benchmark-FOOLSGOLD-25-percent \
 --wandb_group VGG9-CIFAR10-SOUTHWEST-PGD \
 --log_folder logging \
---device=cuda
+--device=cuda:2
