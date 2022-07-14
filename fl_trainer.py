@@ -3,17 +3,17 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from utils import *
-from helpers import *
-from defense import *
+
 # from defense import Con
 
 from models.vgg import get_vgg_model
 import pandas as pd
 
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
+from utils import *
+from helpers import *
+from defense import *
 import datasets
-
 
 import csv
 
@@ -43,7 +43,7 @@ class Net(nn.Module):
         return output
 
 
-def get_results_filename(poison_type, attack_method, model_replacement, project_frequency, defense_method, norm_bound, prox_attack, fixed_pool=False, model_arch="vgg9"):
+def get_results_filename(poison_type, attack_method, model_replacement, project_frequency, defense_method, norm_bound, prox_attack, instance="benchmark", fixed_pool=False, model_arch="vgg9"):
     filename = "{}_{}_{}".format(poison_type, model_arch, attack_method)
     if fixed_pool:
         filename += "_fixed_pool" 
@@ -64,7 +64,7 @@ def get_results_filename(poison_type, attack_method, model_replacement, project_
     elif defense_method in ("krum", "multi-krum", "rfa"):
         filename += "_{}".format(defense_method)
                
-    filename += "_acc_results.csv"
+    filename += f"_{instance}_acc_results.csv"
 
     return filename
 
@@ -136,7 +136,6 @@ def train(model, device, train_loader, optimizer, epoch, log_interval, criterion
     # get learning rate
     for param_group in optimizer.param_groups:
         eta = param_group['lr']
-
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
@@ -345,6 +344,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
         self.prox_attack = arguments['prox_attack']
         self.attack_case = arguments['attack_case']
         self.stddev = arguments['stddev']
+        self.instance = arguments['instance']
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -381,6 +381,10 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             self._defender = RFA()
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased()
+        elif arguments["defense_technique"] == "upper-by-class":
+            self._defender = UpperBoundByClass()
+        elif arguments["defense_technique"] == "upper-bound":
+            self._defender = UpperBound()
         else:
             NotImplementedError("Unsupported defense method !")
 
@@ -608,6 +612,19 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
                                                         device=self.device)
+            elif self.defense_technique == "upper-by-class":
+                participated_attackers = []
+                for in_, id_ in enumerate(selected_node_indices):
+                    if id_ in [0]:
+                        participated_attackers.append(in_)
+                net_list, net_freq = self._defender.exec(client_models=net_list, num_dps=num_data_points, g_user_indices=selected_node_indices, device=self.device, attacker_idxs=participated_attackers)
+            
+            elif self.defense_technique == "upper-bound":
+                participated_attackers = []
+                for in_, id_ in enumerate(selected_node_indices):
+                    if id_ in [0]:
+                        participated_attackers.append(in_)
+                net_list, net_freq = self._defender.exec(client_models=net_list, num_dps=num_data_points, g_user_indices=selected_node_indices, device=self.device, attacker_idxs=participated_attackers)
             else:
                 NotImplementedError("Unsupported defense method !")
 
@@ -648,7 +665,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             df = pd.concat([df1, df])
 
         results_filename = get_results_filename(self.poison_type, self.attack_method, self.model_replacement, self.project_frequency,
-                self.defense_technique, self.norm_bound, self.prox_attack, False, self.model)
+                self.defense_technique, self.norm_bound, self.prox_attack, self.instance , False, self.model)
 
         df.to_csv(results_filename, index=False)
         logger.info("Wrote accuracy results to: {}".format(results_filename))
@@ -691,18 +708,18 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.dataset = arguments["dataset"]
         self.poison_type = arguments['poison_type']
         self.model_replacement = arguments['model_replacement']
+        self.use_trustworthy = arguments['use_trustworthy']
         self.project_frequency = arguments['project_frequency']
         self.adv_lr = arguments['adv_lr']
         self.prox_attack = arguments['prox_attack']
         self.attack_case = arguments['attack_case']
         self.stddev = arguments['stddev']
         self.attacker_percent = arguments['attacker_percent']
+        self.log_folder = arguments['log_folder']
         self.reputation_score = [1.0 for _ in range(arguments['num_nets'])] #init reputation score for all clients in the FL systems
         self.local_update_history = [[0.0] for _ in range(arguments['num_nets'])] #theta i,t => keep track of update history of clients
         self.flatten_weights = []
         self.flatten_net_avg = None
-
-
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -742,8 +759,28 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased(num_workers=self.part_nets_per_round, num_adv=1)
         elif arguments["defense_technique"] == "krum-multilayer":
-            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1)
-
+            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy)
+            # self._defender = MlFrl(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
+        elif arguments["defense_technique"] == "krum-multilayer-old":
+            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
+        elif arguments["defense_technique"] == "upper-by-class":
+            self._defender = UpperBoundByClass()
+        elif arguments["defense_technique"] == "upper-bound":
+            self._defender = UpperBound()
+        elif arguments["defense_technique"] == "rlr":
+            pytorch_total_params = sum(p.numel() for p in self.net_avg.parameters())
+            args_rlr={
+                'aggr':'avg',
+                'noise':0,
+                'clip': 0,
+                'server_lr': self.args_lr,
+            }
+            self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=4)
+        elif arguments["defense_technique"] == "flame":
+            self._defender = FLAME()
+        elif arguments["defense_technique"] == "foolsgold":
+            pytorch_total_params = sum(p.numel() for p in self.net_avg.parameters())
+            self._defender = FoolsGold(num_clients=self.part_nets_per_round, num_classes=10, num_features=pytorch_total_params)
         else:
             NotImplementedError("Unsupported defense method !")
 
@@ -760,6 +797,12 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         # let's conduct multi-round training
         prev_avg = copy.deepcopy(self.net_avg)
         self.flatten_net_avg = flatten_model(self.net_avg)
+        pytorch_total_params = sum(p.numel() for p in self.net_avg.parameters())
+
+        # The number of previous iterations to use FoolsGold on
+        memory_size = 0
+        delta_memory = np.zeros((self.num_nets, pytorch_total_params, memory_size))
+        summed_deltas = np.zeros((self.num_nets, pytorch_total_params))
 
         for flr in range(1, self.fl_round+1):
             # randomly select participating clients
@@ -801,10 +844,14 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             v0 = torch.nn.utils.parameters_to_vector(model_original)
             wg_norm_list.append(torch.norm(v0).item())
 
-
+            
+            selected_investigate_client = 3
+            g_selected_cli = None
             #     # start the FL process
             for net_idx, global_user_idx in enumerate(selected_node_indices):
                 net  = net_list[net_idx]
+                if net_idx == selected_investigate_client:
+                    g_selected_cli = global_user_idx
                 if global_user_idx in selected_attackers:
                     pass
                 else:
@@ -861,10 +908,12 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                         wg_hat = wg_clone
 
                     for e in range(1, self.adversarial_local_training_period+1):
+                        pgd_attack = self.pgd_attack if flr > 1 else False
+                        print(f"pgd_attack: {pgd_attack}")
                        # we always assume net index 0 is adversary
                         if self.defense_technique in ('krum', 'multi-krum'):
                             train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
+                                    pgd_attack=pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                         elif self.defense_technique == 'kmeans-bases':
                             if flr < 50:
@@ -877,8 +926,11 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                         else:
                             train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
-                                    pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
+                                    pgd_attack=pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
+                            # train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                            #         pgd_attack=self.pgd_attack, eps=self.eps*self.args_gamma**(flr-1), model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
+                            #         prox_attack=self.prox_attack, wg_hat=wg_hat)
 
                     test(net, self.device, self.vanilla_emnist_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="raw-task", dataset=self.dataset, poison_type=self.poison_type)
                     test(net, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
@@ -924,24 +976,72 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             
             
             # ADDITIONAL TRAINING FOR AN INVESTIGATING CLIENT (Without D_edge data)
-            custom_net = copy.deepcopy(self.net_avg)
-            custom_data_loader = self.clean_train_loader
-            custom_criterion = nn.CrossEntropyLoss()
-            custom_optimizer = optim.SGD(custom_net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            custom_adv_optimizer = optim.SGD(custom_net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
-            custom_prox_optimizer = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
-            for param_group in custom_optimizer.param_groups:
-                logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
-            for e_ in range(1, self.local_training_period+1):
-                train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=custom_criterion)        
-               
+            # custom_data_loader = self.clean_train_loader
+            # custom_net = copy.deepcopy(self.net_avg)
             
-            for net_idx, global_client_indx in enumerate(selected_node_indices):
-                flatten_local_model = flatten_model(net_list[net_idx])
-                updates = flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy()
-                # print(updates)
-                # local_updates = np.asarray(flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy())
-                self.local_update_history[global_client_indx] = self.local_update_history[global_client_indx] + updates if self.local_update_history[global_client_indx] is not None else updates
+            # custom_criterion = nn.CrossEntropyLoss()
+            # custom_optimizer = optim.SGD(custom_net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
+            # custom_adv_optimizer = optim.SGD(custom_net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
+            # custom_prox_optimizer = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
+            
+            
+            # custom_data_loader = self.clean_train_loader
+            # print(f"g_selected_cli is: {g_selected_cli}")
+            # poisoned_train_loader = load_poisoned_dataset_test(self.net_dataidx_map[g_selected_cli], self.batch_size) #choose random a client to duplicate
+            
+            # custom_net_2 = copy.deepcopy(self.net_avg)
+            # custom_criterion_2 = nn.CrossEntropyLoss()
+            # custom_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
+            # custom_adv_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
+            # custom_prox_optimizer_2 = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
+            
+            
+            # for param_group in custom_optimizer.param_groups:
+            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
+            # for e_ in range(1, self.local_training_period+1):
+            #     train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=self.criterion)        
+               
+            # for param_group in custom_optimizer_2.param_groups:
+            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
+            # for e_ in range(1, self.local_training_period+1):
+            #     train(custom_net_2, self.device, poisoned_train_loader, custom_optimizer_2, e_, log_interval=self.log_interval, criterion=self.criterion)        
+            
+            # for net_idx, global_client_indx in enumerate(selected_node_indices):
+            #     flatten_local_model = flatten_model(net_list[net_idx])
+            #     updates = flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy()
+            #     # print(updates)
+            #     # local_updates = np.asarray(flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy())
+            #     self.local_update_history[global_client_indx] = self.local_update_history[global_client_indx] + updates if self.local_update_history[global_client_indx] is not None else updates
+            
+            delta = np.zeros((self.num_nets, pytorch_total_params))
+            if memory_size > 0:
+                for net_idx, global_client_indx in enumerate(selected_node_indices):
+                    flatten_local_model = flatten_model(net_list[net_idx])
+                    local_update = flatten_local_model - self.flatten_net_avg
+                    delta[global_client_indx,:] = local_update
+                    # normalize delta
+                    if np.linalg.norm(delta[global_client_indx, :]) > 1:
+                        delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
+
+                    delta_memory[global_client_indx, :, flr % memory_size] = delta[global_client_indx, :]
+                # Track the total vector from each individual client
+                summed_deltas = np.sum(delta_memory, axis=2)      
+            else:
+                for net_idx, global_client_indx in enumerate(selected_node_indices):
+                    flatten_local_model = flatten_model(net_list[net_idx])
+                    local_update = flatten_local_model - self.flatten_net_avg
+                    local_update = local_update.detach().cpu().numpy()
+                    delta[global_client_indx,:] = local_update
+                    # normalize delta
+                    if np.linalg.norm(delta[global_client_indx, :]) > 1:
+                        delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
+                # Track the total vector from each individual client
+                # print(f"delta={delta[selected_node_indices,:]}")
+                # print(f"summed_deltas[selected_node_indices,:].shape is: {summed_deltas[selected_node_indices,:].shape}")
+
+                summed_deltas[selected_node_indices,:] = summed_deltas[selected_node_indices,:] + delta[selected_node_indices,:]
+                # print(f"summed_deltas.shape is: {summed_deltas.shape}")
+                # print(f"summed_deltas={summed_deltas[selected_node_indices,:]}")
 
             ### conduct defense here:
             if self.defense_technique == "no-defense":
@@ -963,12 +1063,12 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                         global_model=self.net_avg,)
             elif self.defense_technique == "krum":
                 net_list, net_freq = self._defender.exec(client_models=net_list, 
-                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        num_dps=num_data_points,
                                                         g_user_indices=selected_node_indices,
                                                         device=self.device)
             elif self.defense_technique == "multi-krum":
                 net_list, net_freq = self._defender.exec(client_models=net_list, 
-                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        num_dps=num_data_points,
                                                         g_user_indices=selected_node_indices,
                                                         device=self.device)
             elif self.defense_technique == "rfa":
@@ -978,13 +1078,20 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                                         eps=1e-5,
                                                         ftol=1e-7,
                                                         device=self.device)
+            elif self.defense_technique == "flame":
+                net_list, net_freq = self._defender.exec(client_models=net_list,
+                                                        net_avg=self.net_avg,
+                                                        device=self.device)
             elif self.defense_technique == "contra":
                 delta = 0.1
                 thr = 0.5
                 k = 3
                 net_list, net_freq, repu_s = self._defender.exec(client_models=net_list,net_freq=net_freq, selected_node_indices = selected_node_indices, historical_local_updates = self.local_update_history, reputations=self.reputation_score, delta=delta, threshold=thr, k = k)
                 self.reputation_score = repu_s
-                
+
+            elif self.defense_technique == "foolsgold":
+                net_list, net_freq = self._defender.exec(client_models=net_list, delta = delta[selected_node_indices,:] ,summed_deltas=summed_deltas[selected_node_indices,:], net_avg=self.net_avg, r=flr, device=self.device)
+            
             elif self.defense_technique == "kmeans-based":
                 # if flr <= 50:
                 #     net_list, net_freq = self._defender.exec(client_models=net_list, 
@@ -993,16 +1100,33 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 #                         device=self.device)
                 # else:
                 net_list, net_freq = self._defender.exec(client_models=net_list,
-                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        num_dps=num_data_points,
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
                                                         g_user_indices=selected_node_indices,
                                                         round=flr,
                                                         device=self.device)
+            
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
                 net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
-                                                        num_dps=[self.num_dps_poisoned_dataset]+num_data_points,
+                                                        num_dps=num_data_points,
+                                                        net_freq=net_freq,
+                                                        net_avg=self.net_avg,
+                                                        g_user_indices=selected_node_indices,
+                                                        pseudo_avg_net=pseudo_avg_net,
+                                                        round=flr,
+                                                        selected_attackers=selected_attackers,
+                                                        model_name=self.model,
+                                                        device=self.device)   
+            # logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
+                print("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))             
+                print("Predicted Attackers in FL iteration-{}: {}".format(flr, pred_g_attacker))   
+
+            elif self.defense_technique == "krum-multilayer-old":
+                pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
+                net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
+                                                        num_dps=num_data_points,
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
                                                         g_user_indices=selected_node_indices,
@@ -1012,30 +1136,48 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                                         device=self.device)   
             # logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
                 print("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))             
-                print("Predicted Attackers in FL iteration-{}: {}".format(flr, pred_g_attacker))             
+                print("Predicted Attackers in FL iteration-{}: {}".format(flr, pred_g_attacker))            
             
+            elif self.defense_technique == "upper-by-class":
+                participated_attackers = []
+                for in_, id_ in enumerate(selected_node_indices):
+                    if id_ in selected_attackers:
+                        participated_attackers.append(in_)
+                net_list, net_freq = self._defender.exec(client_models=net_list, num_dps=num_data_points, g_user_indices=selected_node_indices, device=self.device, attacker_idxs=participated_attackers)
+            
+            elif self.defense_technique == "upper-bound":
+                participated_attackers = []
+                for in_, id_ in enumerate(selected_node_indices):
+                    if id_ in selected_attackers:
+                        participated_attackers.append(in_)
+                net_list, net_freq = self._defender.exec(client_models=net_list, num_dps=num_data_points, g_user_indices=selected_node_indices, device=self.device, attacker_idxs=participated_attackers)
+            
+            elif self.defense_technique == "upper-bound":
+                participated_attackers = []
+                for in_, id_ in enumerate(selected_node_indices):
+                    if id_ in selected_attackers:
+                        participated_attackers.append(in_)
+                net_list, net_freq = self._defender.exec(client_models=net_list, num_dps=num_data_points, g_user_indices=selected_node_indices, device=self.device, attacker_idxs=participated_attackers)
+            elif self.defense_technique == 'rlr':
+                print(f"num_data_points: {num_data_points}")
+                net_list, net_freq = self._defender.exec(client_models=net_list,
+                                                        num_dps=num_data_points,
+                                                        global_model=self.net_avg)
+        
             else:
                 NotImplementedError("Unsupported defense method !")
 
 
             # after local training periods
             
-            # #First we update the local updates of each client in this training round
-            # for net_idx, global_client_indx in enumerate(selected_node_indices):
-            #     flatten_local_model = flatten_model(net_list[net_idx])
-            #     local_updates = flatten_local_model - self.flatten_net_avg
-            #     self.local_update_history[global_client_indx] = self.local_update_history[global_client_indx] + local_updates if self.local_update_history[global_client_indx] is not None else local_updates
+            # First we update the local updates of each client in this training round
+            # delta_w = []
+
+                
 
             self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
             self.flatten_net_avg = flatten_model(self.net_avg)
-            logging_items = get_logging_items(net_list, custom_net, selected_node_indices, prev_avg, self.net_avg, selected_attackers, flr)
-            with open('logging/new_benchmark_01.csv', 'a+') as lf:
-                write = csv.writer(lf)
-                write.writerows(logging_items)
 
-            # df_data = logging_items
-            # df_writer = pd.DataFrame(df_data)
-            # df_writer.to_csv("logging/test_write.csv", mode='a+')
             prev_avg = copy.deepcopy(self.net_avg)
             if self.defense_technique == "weak-dp":
                 # add noise to self.net_avg
@@ -1091,13 +1233,6 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         results_filename = get_results_filename(self.poison_type, self.attack_method, self.model_replacement, self.project_frequency,
                 self.defense_technique, self.norm_bound, self.prox_attack, fixed_pool=True, model_arch=self.model)
         df.to_csv(results_filename, index=False)
-        # wandb_logging = {'fl_iter': fl_iter_list, 
-        #                     'main_task_acc': main_task_acc, 
-        #                     'backdoor_acc': backdoor_task_acc, 
-        #                     'raw_task_acc':raw_task_acc, 
-        #                     'adv_norm_diff': adv_norm_diff_list, 
-        #                     'wg_norm': wg_norm_list,
-        #                     }
         logger.info("Wrote accuracy results to: {}".format(results_filename))
         # if(wandb_ins):
         #     wandb_ins.log({"general": wandb_logging})
