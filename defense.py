@@ -685,17 +685,19 @@ class KrMLRFL(Defense):
         self.pairwise_choosing_frequencies = np.zeros((total_workers, total_workers))
         self.trustworthy_scores = [[0.5] for _ in range(total_workers+1)]
 
-        with open(f'{self.instance}_combined_file_klfrl.csv', 'w', newline='') as outcsv:
+        with open(f'{self.instance}_ablation_study.csv', 'w', newline='') as outcsv:
             writer = csv.DictWriter(outcsv, fieldnames = ["flr", 
                                                           "attacker_idxs",
                                                           "pred_idxs_1", 
                                                           "pred_idxs_2",
-                                                          "true_positive_1",
-                                                            "true_positive_2",
-                                                            "false_negative_1",
-                                                            "false_negative_2",
-                                                            "false_positive_1",
-                                                            "false_positive_2",
+                                                          "tpr_1",
+                                                            "tpr_2",
+                                                            "tpr_union",
+                                                            "tpr_fedgrad",
+                                                            "fpr_1",
+                                                            "fpr_2",
+                                                            "fpr_union",
+                                                            "fpr_fedgrad",
                                                             "missed_idxs_1",
                                                             "missed_idxs_2",
                                                             "freq",
@@ -749,12 +751,6 @@ class KrMLRFL(Defense):
                 cli_i_arr = np.hstack((bias_p_i, w_p_i))
                 cli_j_arr = np.hstack((bias_p_j, w_p_j))
                 
-                
-                # cs_arr = np.hstack(cs_1, cs_2)
-                
-            #     if j > i:
-            #         distance.append(float(np.linalg.norm(cli_i_arr-cli_j_arr)**2)) # let's change this to pytorch version
-            # neighbor_distances.append(distance)
                 
         logger.info("Starting performing KrMLRFL...")
        
@@ -928,6 +924,7 @@ class KrMLRFL(Defense):
             print(f"final_attacker_idxs is: {final_attacker_idxs}")
 
         # STARTING USING TRUSTWORTHY SCORES
+        
         normal_idxs = [id_ for id_ in range(total_client) if id_ not in final_attacker_idxs]
         g_attacker_idxs = g_user_indices[final_attacker_idxs]
         print(f"g_attacker_idxs: {g_attacker_idxs}")
@@ -945,6 +942,7 @@ class KrMLRFL(Defense):
                 g_idx = g_user_indices[idx]
                 if np.average(self.trustworthy_scores[g_idx]) >= trustworthy_threshold:
                     filtered_attacker_idxs.remove(idx)
+        w_trustworthy_attacker_idxs = list(filtered_attacker_idxs.copy())
         if not filtered_attacker_idxs:
             filtered_attacker_idxs = attacker_local_idxs
         print(f"filtered_attacker_idxs: {filtered_attacker_idxs}")   
@@ -952,21 +950,31 @@ class KrMLRFL(Defense):
             final_attacker_idxs = filtered_attacker_idxs
         print(f"final_attacker_idxs are: {final_attacker_idxs}")
         
+        # START PERFORIMNG ABLATION STUDY 
+        # attacker_local_idxs: pred attackers of filter 1
+        # attacker_local_idxs_2: pred attackers of filter 2
+        # pseudo_final_attacker_idxs: union of the two filter 
+        # w_trustworthy_attacker_idxs: the pred attacker after remove trusthworthy clients.
 
         for idx, g_idx in enumerate(g_user_indices):
             if idx in final_attacker_idxs:
                 self.trustworthy_scores[g_idx].append(0.25)
             else:
                 self.trustworthy_scores[g_idx].append(1.0)
-                
+        print(f"w_trustworthy_attacker_idxs: {w_trustworthy_attacker_idxs}")  
+        print(f"participated_attackers: {participated_attackers}")      
         freq_participated_attackers = [self.choosing_frequencies[g_idx] for g_idx in g_user_indices]
         true_positive_pred_layer1 = []
         true_positive_pred_layer2 = []
+        tp_pseudo_final_pred = []
+        tp_fedgrad_pred = []
         false_positive_pred_layer1 = []
         false_positive_pred_layer2 = []
         for id_ in participated_attackers:
             true_positive_pred_layer1.append(1.0 if id_ in attacker_local_idxs else 0.0)
             true_positive_pred_layer2.append(1.0 if id_ in attacker_local_idxs_2 else 0.0)
+            tp_pseudo_final_pred.append(1.0 if id_ in pseudo_final_attacker_idxs else 0.0)
+            tp_fedgrad_pred.append(1.0 if id_ in w_trustworthy_attacker_idxs else 0.0)
         for id_ in attacker_local_idxs:
             if id_ not in participated_attackers:
                 false_positive_pred_layer1.append(1.0)
@@ -974,34 +982,48 @@ class KrMLRFL(Defense):
             if id_ not in participated_attackers:
                 false_positive_pred_layer2.append(1.0)
             # if id_ not in 
+        # print(f"tp_fedgrad_pred: {tp_fedgrad_pred}")
+        fp_layer_1 = len(attacker_local_idxs) - sum(true_positive_pred_layer1)
+        fp_layer_2 = len(attacker_local_idxs_2) - sum(true_positive_pred_layer2)
+        fp_union = len(pseudo_final_attacker_idxs) - sum(tp_pseudo_final_pred)
+        fp_fegrad = len(w_trustworthy_attacker_idxs) - sum(tp_fedgrad_pred)
         
+        # Calculate true positive rate (TPR = TP/(TP+FN))
+        total_positive = len(participated_attackers)
+        total_negative = total_client - total_positive
+        tpr_1, tpr_2, tpr_union, tpr_fedgrad = 1.0, 1.0, 1.0, 1.0
+        
+        if total_positive > 0.0:
+            tpr_1 = sum(true_positive_pred_layer1)/total_positive
+            tpr_2 = sum(true_positive_pred_layer2)/total_positive
+            tpr_union = sum(tp_pseudo_final_pred)/total_positive
+            tpr_fedgrad = sum(tp_fedgrad_pred)/total_positive
+        
+        # False postive rate
+        fpr_1, fpr_2, fpr_union, fpr_fedgrad = fp_layer_1/total_negative, fp_layer_2/total_negative, fp_union/total_negative, fp_fegrad/total_negative 
 
             
         # true_positive_pred_layer1_val = sum(true_positive_pred_layer1)/len(true_positive_pred_layer1) if len(true_positive_pred_layer1) else 0.0
         # true_positive_pred_layer2_val = sum(true_positive_pred_layer2)/len(true_positive_pred_layer2) if len(true_positive_pred_layer2) else 0.0
-        true_positive_pred_layer1_val = sum(true_positive_pred_layer1)/len(participated_attackers) if len(true_positive_pred_layer1) else 0.0
-        if len(participated_attackers) == 0 and len(attacker_local_idxs) == 0:
-            true_positive_pred_layer1_val = 1.0
-        true_positive_pred_layer2_val = sum(true_positive_pred_layer2)/len(participated_attackers) if len(true_positive_pred_layer2) else 0.0
+        # true_positive_pred_layer1_val = sum(true_positive_pred_layer1)/len(participated_attackers) if len(true_positive_pred_layer1) else 0.0
+        # if len(participated_attackers) == 0 and len(attacker_local_idxs) == 0:
+        #     true_positive_pred_layer1_val = 1.0
+        # true_positive_pred_layer2_val = sum(true_positive_pred_layer2)/len(participated_attackers) if len(true_positive_pred_layer2) else 0.0
         
-        if len(participated_attackers) == 0 and len(attacker_local_idxs_2) == 0:
-            true_positive_pred_layer2_val = 1.0
-        fn_layer1_val = 1.0 - true_positive_pred_layer1_val
-        fn_layer2_val = 1.0 - true_positive_pred_layer2_val
-        fp_layer1_val = sum(false_positive_pred_layer1)/(total_client-len(participated_attackers)) if len(false_positive_pred_layer1) else 0.0
-        fp_layer2_val = sum(false_positive_pred_layer2)/(total_client-len(participated_attackers)) if len(false_positive_pred_layer2) else 0.0
+        # if len(participated_attackers) == 0 and len(attacker_local_idxs_2) == 0:
+        #     true_positive_pred_layer2_val = 1.0
+        # fn_layer1_val = 1.0 - true_positive_pred_layer1_val
+        # fn_layer2_val = 1.0 - true_positive_pred_layer2_val
+        # fp_layer1_val = sum(false_positive_pred_layer1)/(total_client-len(participated_attackers)) if len(false_positive_pred_layer1) else 0.0
+        # fp_layer2_val = sum(false_positive_pred_layer2)/(total_client-len(participated_attackers)) if len(false_positive_pred_layer2) else 0.0
 
         logging_per_round = (
             round,
             participated_attackers,
             attacker_local_idxs,
             attacker_local_idxs_2,
-            true_positive_pred_layer1_val,
-            true_positive_pred_layer2_val,
-            fn_layer1_val,
-            fn_layer2_val,
-            fp_layer1_val,
-            fp_layer2_val,
+            tpr_1, tpr_2, tpr_union, tpr_fedgrad,
+            fpr_1, fpr_2, fpr_union, fpr_fedgrad,
             missed_attacker_idxs_by_thre,
             missed_attacker_idxs_by_kmeans,
             freq_participated_attackers,
@@ -1010,7 +1032,7 @@ class KrMLRFL(Defense):
             saved_pairwise_sim
         )
         
-        with open(f'{self.instance}_combined_file_klfrl.csv', "a+") as w_f:
+        with open(f'{self.instance}_ablation_study.csv', "a+") as w_f:
             writer = csv.writer(w_f)
             writer.writerow(logging_per_round)
         neo_net_list = []
@@ -1720,9 +1742,6 @@ class FLAME(Defense):
         
         min_cluster_sz = int(total_client/2+1)
         hb_clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_sz, min_samples=1)
-        # hb_clusterer = hdbscan.HDBSCAN(algorithm='best', alpha=1.0, approx_min_span_tree=True,
-        #                         gen_min_span_tree=False, leaf_size=40,
-        #                         metric='euclidean', min_cluster_size=2, min_samples=None, p=None)
         hb_clusterer.fit(pairwise_cs)
         layer_1_pred_labels = hb_clusterer.labels_
         layer_1_pred_labels = np.asarray(layer_1_pred_labels)

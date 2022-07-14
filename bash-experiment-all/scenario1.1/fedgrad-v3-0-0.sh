@@ -1,13 +1,13 @@
 python simulated_averaging.py \
 --lr 0.02 \
 --gamma 0.998 \
---num_nets 3383 \
+--num_nets 200 \
 --fl_round 1500 \
---part_nets_per_round 30 \
+--part_nets_per_round 10 \
 --local_train_period 2 \
 --adversarial_local_training_period 2 \
---dataset emnist \
---model lenet \
+--dataset cifar10 \
+--model vgg9 \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
 --defense_method krum-multilayer \
@@ -20,11 +20,11 @@ python simulated_averaging.py \
 --fraction 0.15 \
 --adv_lr 0.02 \
 --prox_attack False \
---poison_type ardis \
+--poison_type southwest \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance fedgrad-v3.0.0-25-percent-M30 \
---wandb_group LENET-EMNIST-ARDIS-BLACKBOX \
+--instance fedgrad-25-percent-M30 \
+--wandb_group VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
 --log_folder logging \
 --use_trustworthy True \
 --device=cuda:2
