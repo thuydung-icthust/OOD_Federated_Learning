@@ -4,13 +4,13 @@ python simulated_averaging.py \
 --num_nets 200 \
 --fl_round 1500 \
 --part_nets_per_round 10 \
---local_train_period 20 \
---adversarial_local_training_period 20 \
+--local_train_period 2 \
+--adversarial_local_training_period 2 \
 --dataset cifar10 \
 --model simple_model \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method no-defense \
+--defense_method krum-multilayer \
 --attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \

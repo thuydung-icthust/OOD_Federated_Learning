@@ -1109,6 +1109,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
+                net_list_cp = copy.deepcopy(net_list)
                 net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
                                                         num_dps=num_data_points,
                                                         net_freq=net_freq,
@@ -1177,7 +1178,10 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
             self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
             self.flatten_net_avg = flatten_model(self.net_avg)
-
+            logging_items = get_logging_items(net_list_cp, selected_node_indices, prev_avg, self.net_avg, selected_attackers, flr)
+            with open('logging/fedgrad_metadata.csv', 'a+') as lf:
+                write = csv.writer(lf)
+                write.writerows(logging_items)
             prev_avg = copy.deepcopy(self.net_avg)
             if self.defense_technique == "weak-dp":
                 # add noise to self.net_avg

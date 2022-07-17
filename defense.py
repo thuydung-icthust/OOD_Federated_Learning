@@ -102,6 +102,31 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net, model="vgg9"):
             weight_list.append(weight)
             weight_update.append(weight-avg_weight)
     
+    elif model == "simple_model":
+        for idx, param in enumerate(global_avg_net.fc3.parameters()):
+            if idx:
+                avg_bias = param.data.cpu().numpy()
+            else:
+                avg_weight = param.data.cpu().numpy()
+
+        for idx, param in enumerate(prev_net.fc3.parameters()):
+            if idx:
+                prev_avg_bias = param.data.cpu().numpy()
+            else:
+                prev_avg_weight = param.data.cpu().numpy()
+        glob_update = avg_weight - prev_avg_weight
+        for net in net_list:
+            bias = None
+            weight = None
+            for idx, param in enumerate(net.fc3.parameters()):
+                if idx:
+                    bias = param.data.cpu().numpy()
+                else:
+                    weight = param.data.cpu().numpy()
+            bias_list.append(bias)
+            weight_list.append(weight)
+            weight_update.append(weight-avg_weight)
+        
     return bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight
 def rlr_avg(vectorize_nets, vectorize_avg_net, freq, attacker_idxs, lr, n_params, device, robustLR_threshold=4):
     lr_vector = torch.Tensor([lr]*n_params).to(device)

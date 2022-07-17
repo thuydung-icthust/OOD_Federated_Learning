@@ -10,7 +10,7 @@ python simulated_averaging.py \
 --model simple_model \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method no-defense \
+--defense_method krum-multilayer \
 --attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \
@@ -23,4 +23,7 @@ python simulated_averaging.py \
 --poison_type ardis \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---device=cuda
+--instance simple_net \
+--wandb_group VGG9-CIFAR10-SOUTHWEST-BLACKBOX \
+--log_folder logging \
+--device=cuda:2

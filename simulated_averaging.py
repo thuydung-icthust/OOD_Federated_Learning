@@ -161,6 +161,7 @@ if __name__ == "__main__":
                 ckpt_state_dict = torch.load(ckpt_file, map_location=device)
         elif args.model == "simple_model":
             net_avg = SimpleNet(num_classes=10).to(device)
+            print("Load simple net...")
         # net_avg.load_state_dict(ckpt_state_dict)
         # logger.info("Loading checkpoint file successfully ...")
         # print(net_avg.classifier)
