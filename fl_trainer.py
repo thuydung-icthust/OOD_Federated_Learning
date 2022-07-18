@@ -1229,7 +1229,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             df = pd.concat([df1, df])
 
         results_filename = get_results_filename(self.poison_type, self.attack_method, self.model_replacement, self.project_frequency,
-                self.defense_technique, self.norm_bound, self.prox_attack, fixed_pool=True, model_arch=self.model)
+                self.defense_technique, self.norm_bound, self.prox_attack, fixed_pool=True, model_arch=self.model, instance=self.instance)
         df.to_csv(results_filename, index=False)
 
         logger.info("Wrote accuracy results to: {}".format(results_filename))
