@@ -668,7 +668,7 @@ class KrMLRFL(Defense):
     we implement the robust aggregator at: https://papers.nips.cc/paper/6617-machine-learning-with-adversaries-byzantine-tolerant-gradient-descent.pdf
     and we integrate both krum and multi-krum in this single class
     """
-    def __init__(self, total_workers, num_workers, num_adv, num_valid = 1, instance="benchmark", use_trustworthy=False, *args, **kwargs):
+    def __init__(self, total_workers, num_workers, num_adv, num_valid = 1, instance="benchmark", use_trustworthy=False, use_layer1=True, use_layer2=True, *args, **kwargs):
         # assert (mode in ("krum", "multi-krum"))
         self.num_valid = num_valid
         self.num_workers = num_workers
@@ -679,6 +679,8 @@ class KrMLRFL(Defense):
         self.use_trustworthy = use_trustworthy
         self.pairwise_w = np.zeros((total_workers+1, total_workers+1))
         self.pairwise_b = np.zeros((total_workers+1, total_workers+1))
+        self.use_layer1 = use_layer1
+        self.use_layer2 = use_layer2
         
         # print(self.pairwise_cs.shape)
         logger.info("Starting performing KrMLRFL...")
@@ -924,7 +926,10 @@ class KrMLRFL(Defense):
             print(f"final_attacker_idxs is: {final_attacker_idxs}")
 
         # STARTING USING TRUSTWORTHY SCORES
-        
+        if self.use_layer1 and not self.use_layer2:
+            final_attacker_idxs = attacker_local_idxs
+        if not self.use_layer1 and self.use_layer2:
+            final_attacker_idxs = attacker_local_idxs_2
         normal_idxs = [id_ for id_ in range(total_client) if id_ not in final_attacker_idxs]
         g_attacker_idxs = g_user_indices[final_attacker_idxs]
         print(f"g_attacker_idxs: {g_attacker_idxs}")
@@ -974,7 +979,7 @@ class KrMLRFL(Defense):
             true_positive_pred_layer1.append(1.0 if id_ in attacker_local_idxs else 0.0)
             true_positive_pred_layer2.append(1.0 if id_ in attacker_local_idxs_2 else 0.0)
             tp_pseudo_final_pred.append(1.0 if id_ in pseudo_final_attacker_idxs else 0.0)
-            tp_fedgrad_pred.append(1.0 if id_ in w_trustworthy_attacker_idxs else 0.0)
+            tp_fedgrad_pred.append(1.0 if id_ in final_attacker_idxs else 0.0)
         for id_ in attacker_local_idxs:
             if id_ not in participated_attackers:
                 false_positive_pred_layer1.append(1.0)
@@ -986,7 +991,7 @@ class KrMLRFL(Defense):
         fp_layer_1 = len(attacker_local_idxs) - sum(true_positive_pred_layer1)
         fp_layer_2 = len(attacker_local_idxs_2) - sum(true_positive_pred_layer2)
         fp_union = len(pseudo_final_attacker_idxs) - sum(tp_pseudo_final_pred)
-        fp_fegrad = len(w_trustworthy_attacker_idxs) - sum(tp_fedgrad_pred)
+        fp_fegrad = len(final_attacker_idxs) - sum(tp_fedgrad_pred)
         
         # Calculate true positive rate (TPR = TP/(TP+FN))
         total_positive = len(participated_attackers)

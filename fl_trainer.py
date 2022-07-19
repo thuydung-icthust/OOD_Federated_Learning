@@ -64,7 +64,7 @@ def get_results_filename(poison_type, attack_method, model_replacement, project_
     elif defense_method in ("krum", "multi-krum", "rfa"):
         filename += "_{}".format(defense_method)
                
-    filename += f"_{instance}_acc_results.csv"
+    filename= f"{instance}_{filename}_acc_results.csv"
 
     return filename
 
@@ -718,6 +718,9 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.local_update_history = [[0.0] for _ in range(arguments['num_nets'])] #theta i,t => keep track of update history of clients
         self.flatten_weights = []
         self.flatten_net_avg = None
+        self.instance = arguments['instance']
+        self.use_layer1 = arguments['layer1']
+        self.use_layer2 = arguments['layer2']
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -757,7 +760,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased(num_workers=self.part_nets_per_round, num_adv=1)
         elif arguments["defense_technique"] == "krum-multilayer":
-            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy)
+            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy, use_layer1 = self.use_layer1, use_layer2 = self.use_layer2)
             # self._defender = MlFrl(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
         elif arguments["defense_technique"] == "krum-multilayer-old":
             self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
@@ -1230,6 +1233,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
         results_filename = get_results_filename(self.poison_type, self.attack_method, self.model_replacement, self.project_frequency,
                 self.defense_technique, self.norm_bound, self.prox_attack, fixed_pool=True, model_arch=self.model, instance=self.instance)
+        print(f"results_filename: {results_filename}")
         df.to_csv(results_filename, index=False)
 
         logger.info("Wrote accuracy results to: {}".format(results_filename))

@@ -104,7 +104,11 @@ if __name__ == "__main__":
     parser.add_argument('--log_folder', type=str, default="logging",
                         help='log folder to save the result')
     parser.add_argument('--use_trustworthy', type=bool_string, default=False,
-                        help='to use trustworthy scores or not only for fedgrad')              
+                        help='to use trustworthy scores or not only for fedgrad')    
+    parser.add_argument('--layer1', type=bool_string, default=False,
+                        help='to use trustworthy scores or not only for fedgrad')    
+    parser.add_argument('--layer2', type=bool_string, default=False,
+                        help='to use trustworthy scores or not only for fedgrad')             
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
@@ -226,6 +230,8 @@ if __name__ == "__main__":
             "attack_case":args.attack_case,
             "stddev":args.stddev,
             "attacker_percent":args.attacker_percent,
+            "layer1": args.layer1,
+            "layer2": args.layer2,
             }
                )
     
@@ -274,6 +280,8 @@ if __name__ == "__main__":
         arguments = {
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,
             "use_trustworthy": args.use_trustworthy,
+            "layer1": args.layer1,
+            "layer2": args.layer2,
             "vanilla_model":vanilla_model,
             "net_avg":net_avg,
             "net_dataidx_map":net_dataidx_map,
