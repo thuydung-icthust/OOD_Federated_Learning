@@ -104,7 +104,9 @@ if __name__ == "__main__":
     parser.add_argument('--log_folder', type=str, default="logging",
                         help='log folder to save the result')
     parser.add_argument('--use_trustworthy', type=bool_string, default=False,
-                        help='to use trustworthy scores or not only for fedgrad')              
+                        help='to use trustworthy scores or not only for fedgrad') 
+    parser.add_argument('--degree_nonIID', type=float, default=0.5,
+                        help='the degree_nonIID of data distribution between clients')               
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
@@ -133,11 +135,15 @@ if __name__ == "__main__":
     import copy
     # the hyper-params are inspired by the paper "Can you really backdoor FL?" (https://arxiv.org/pdf/1911.07963.pdf)
     # partition_strategy = "homo"
-    partition_strategy = "hetero-dir"
-
+    non_iid_degree = args.degree_nonIID
+    if non_iid_degree > 0.0:
+        partition_strategy = "hetero-dir"
+    if not non_iid_degree:
+        partition_strategy = "homo"
+    
     net_dataidx_map = partition_data(
             args.dataset, './data', partition_strategy,
-            args.num_nets, 0.5, args)
+            args.num_nets, non_iid_degree, args)
 
     # rounds of fl to conduct
     ## some hyper-params here:

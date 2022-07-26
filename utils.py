@@ -218,7 +218,7 @@ def partition_data(dataset, datadir, partition, n_nets, alpha, args):
 
     elif partition == "hetero-dir":
         min_size = 0
-        K = 10
+        K = 10 # number of classes
         N = y_train.shape[0]
         net_dataidx_map = {}
 
@@ -447,7 +447,7 @@ def load_poisoned_dataset(args):
         labels_clean_set = poisoned_dataset.targets
         unique, counts = np.unique(labels_clean_set, return_counts=True)
         cnt_clean_label = dict(zip(unique, counts))
-        cnt_clean_label["ardis"] = 100
+        cnt_clean_label["edge-case"] = num_dps_poisoned_dataset
         print(cnt_clean_label)
         # df = pd.DataFrame(cnt_clean_label)
         # print(df)
@@ -459,10 +459,10 @@ def load_poisoned_dataset(args):
         barlist = plt.bar(labs, cnts, color ='maroon')
         barlist[-1].set_color('b')
         
-        plt.xlabel("Label distribution")
-        plt.ylabel("No. of sample per label")
-        plt.title("Poison client data's distribution")
-        plt.savefig("emnist_distribution_label.png")
+        # plt.xlabel("Label distribution")
+        # plt.ylabel("No. of sample per label")
+        # plt.title("Poison client data's distribution")
+        # plt.savefig("emnist_distribution_label.png")
     
     elif args.dataset == "cifar10":
         if args.poison_type == "southwest":

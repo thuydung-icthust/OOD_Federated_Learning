@@ -2,7 +2,7 @@ python simulated_averaging.py \
 --lr 0.02 \
 --gamma 0.998 \
 --num_nets 200 \
---fl_round 100 \
+--fl_round 1000 \
 --part_nets_per_round 10 \
 --local_train_period 2 \
 --adversarial_local_training_period 2 \
@@ -22,8 +22,9 @@ python simulated_averaging.py \
 --poison_type southwest \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance idea-fedgrad-25-percent \
---wandb_group VGG9-CIFAR10-SOUTHWEST-PGD-2 \
+--instance no-defense-0.0 \
+--wandb_group DEGREE-OF-NON-IID \
 --log_folder logging \
+--degree_nonIID 0.0 \
 --use_trustworthy True \
 --device=cuda

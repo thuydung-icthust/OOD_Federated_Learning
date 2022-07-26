@@ -64,7 +64,8 @@ def get_results_filename(poison_type, attack_method, model_replacement, project_
     elif defense_method in ("krum", "multi-krum", "rfa"):
         filename += "_{}".format(defense_method)
                
-    filename += f"_{instance}_acc_results.csv"
+    filename = f"{instance}_{filename}_acc_results.csv"
+    print(f"filename: {filename}")
 
     return filename
 
@@ -718,6 +719,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.local_update_history = [[0.0] for _ in range(arguments['num_nets'])] #theta i,t => keep track of update history of clients
         self.flatten_weights = []
         self.flatten_net_avg = None
+        self.instance = arguments['instance']
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -747,9 +749,11 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             # doesn't really add noise. just clips
             self._defender = WeightDiffClippingDefense(norm_bound=arguments['norm_bound'])
         elif arguments["defense_technique"] == "krum":
-            self._defender = Krum(mode='krum', num_workers=self.part_nets_per_round, num_adv=1)
+            num_adv = int(self.attacker_percent*self.part_nets_per_round)
+            self._defender = Krum(mode='krum', num_workers=self.part_nets_per_round, num_adv=num_adv)
         elif arguments["defense_technique"] == "multi-krum":
-            self._defender = Krum(mode='multi-krum', num_workers=self.part_nets_per_round, num_adv=1)
+            num_adv = int(self.attacker_percent*self.part_nets_per_round)
+            self._defender = Krum(mode='multi-krum', num_workers=self.part_nets_per_round, num_adv=num_adv)
         elif arguments["defense_technique"] == "rfa":
             self._defender = RFA()
         elif arguments["defense_technique"] == "contra":
@@ -757,7 +761,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         elif arguments["defense_technique"] == "kmeans-based":
             self._defender = KmeansBased(num_workers=self.part_nets_per_round, num_adv=1)
         elif arguments["defense_technique"] == "krum-multilayer":
-            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy)
+            num_adv = int(self.attacker_percent*self.part_nets_per_round)
+            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=num_adv, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy)
             # self._defender = MlFrl(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
         elif arguments["defense_technique"] == "krum-multilayer-old":
             self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
@@ -773,7 +778,9 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 'clip': 0,
                 'server_lr': self.args_lr,
             }
-            self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=4)
+            theta = 4 if arguments['dataset'] == 'cifar10' else 10
+            # print(f"theta: {theta}")
+            self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=theta)
         elif arguments["defense_technique"] == "flame":
             self._defender = FLAME()
         elif arguments["defense_technique"] == "foolsgold":
@@ -792,6 +799,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         fl_iter_list = []
         adv_norm_diff_list = []
         wg_norm_list = []
+        # additional information tpr_fedgrad, fpr_fedgrad, tnr_fedgrad
+        tpr_fedgrad, fpr_fedgrad, tnr_fedgrad = 0.0, 0.0, 0.0
         # let's conduct multi-round training
         prev_avg = copy.deepcopy(self.net_avg)
         self.flatten_net_avg = flatten_model(self.net_avg)
@@ -954,11 +963,6 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                         # experimental
                         norm_diff_collector.append(adv_norm_diff)
                 else:
-                    # for e in range(1, self.local_training_period+1):
-                    #    train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)                
-                    # # at here we can check the distance between w_normal and w_g i.e. `\|w_bad - w_g\|_2`
-                    # calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="normal")
-
                     for e in range(1, self.local_training_period+1):
                        train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)                
                        # at here we can check the distance between w_normal and w_g i.e. `\|w_bad - w_g\|_2`
@@ -971,45 +975,6 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
 
              #First we update the local updates of each client in this training round
-            
-            
-            # ADDITIONAL TRAINING FOR AN INVESTIGATING CLIENT (Without D_edge data)
-            # custom_data_loader = self.clean_train_loader
-            # custom_net = copy.deepcopy(self.net_avg)
-            
-            # custom_criterion = nn.CrossEntropyLoss()
-            # custom_optimizer = optim.SGD(custom_net.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            # custom_adv_optimizer = optim.SGD(custom_net.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
-            # custom_prox_optimizer = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
-            
-            
-            # custom_data_loader = self.clean_train_loader
-            # print(f"g_selected_cli is: {g_selected_cli}")
-            # poisoned_train_loader = load_poisoned_dataset_test(self.net_dataidx_map[g_selected_cli], self.batch_size) #choose random a client to duplicate
-            
-            # custom_net_2 = copy.deepcopy(self.net_avg)
-            # custom_criterion_2 = nn.CrossEntropyLoss()
-            # custom_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # epoch, net, train_loader, optimizer, criterion
-            # custom_adv_optimizer_2 = optim.SGD(custom_net_2.parameters(), lr=self.adv_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4) # looks like adversary needs same lr to hide with others
-            # custom_prox_optimizer_2 = optim.SGD(wg_clone.parameters(), lr=self.args_lr*self.args_gamma**(flr-1), momentum=0.9, weight_decay=1e-4)
-            
-            
-            # for param_group in custom_optimizer.param_groups:
-            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
-            # for e_ in range(1, self.local_training_period+1):
-            #     train(custom_net, self.device, custom_data_loader, custom_optimizer, e_, log_interval=self.log_interval, criterion=self.criterion)        
-               
-            # for param_group in custom_optimizer_2.param_groups:
-            #     logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
-            # for e_ in range(1, self.local_training_period+1):
-            #     train(custom_net_2, self.device, poisoned_train_loader, custom_optimizer_2, e_, log_interval=self.log_interval, criterion=self.criterion)        
-            
-            # for net_idx, global_client_indx in enumerate(selected_node_indices):
-            #     flatten_local_model = flatten_model(net_list[net_idx])
-            #     updates = flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy()
-            #     # print(updates)
-            #     # local_updates = np.asarray(flatten_local_model.cpu().data.numpy() - self.flatten_net_avg.cpu().data.numpy())
-            #     self.local_update_history[global_client_indx] = self.local_update_history[global_client_indx] + updates if self.local_update_history[global_client_indx] is not None else updates
             
             delta = np.zeros((self.num_nets, pytorch_total_params))
             if memory_size > 0:
@@ -1107,7 +1072,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
-                net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
+                net_list, net_freq, pred_g_attacker, tpr_fedgrad, fpr_fedgrad, tnr_fedgrad = self._defender.exec(client_models=net_list,
                                                         num_dps=num_data_points,
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
@@ -1213,7 +1178,14 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                             'wg_norm': torch.norm(v0).item(),
                             'cnt_attackers': cnt_attacker,
                             }
-                wandb_ins.log({"general": wandb_logging})
+                additional_logging = {
+                    'tpr_fedgrad': tpr_fedgrad, 
+                    'fpr_fedgrad': fpr_fedgrad, 
+                    'tnr_fedgrad': tnr_fedgrad,
+                }
+                wandb_ins.log({"general": wandb_logging, "additional": additional_logging})
+                # wandb_ins.log({"additional": additional_logging})
+                
             
         df = pd.DataFrame({'fl_iter': fl_iter_list, 
                             'main_task_acc': main_task_acc, 
@@ -1229,7 +1201,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             df = pd.concat([df1, df])
 
         results_filename = get_results_filename(self.poison_type, self.attack_method, self.model_replacement, self.project_frequency,
-                self.defense_technique, self.norm_bound, self.prox_attack, fixed_pool=True, model_arch=self.model)
+                self.defense_technique, self.norm_bound, self.prox_attack, fixed_pool=True, model_arch=self.model, instance=self.instance)
         df.to_csv(results_filename, index=False)
 
         logger.info("Wrote accuracy results to: {}".format(results_filename))

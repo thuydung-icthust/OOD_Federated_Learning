@@ -1,0 +1,3 @@
+fl_iter,main_task_acc,backdoor_acc,raw_task_acc,adv_norm_diff,wg_norm
+0,88.0,11.0,0.0,0,0.0
+1,88.6425,12.0,93.175,0,9.961053848266602
