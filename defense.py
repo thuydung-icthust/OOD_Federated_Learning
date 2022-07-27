@@ -981,7 +981,7 @@ class KrMLRFL(Defense):
             selected_net_indx.append(i_star)
             pred_g_attacker = [g_user_indices[i] for i in final_attacker_idxs]
             # return [client_models[i_star]], [1.0], pred_g_attacker
-            return [net_avg], [1.0], []
+            return [net_avg], [1.0], [], tpr_fedgrad, fpr_fedgrad, tnr_fedgrad
             
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
         selected_num_dps = np.array(num_dps)[selected_net_indx]

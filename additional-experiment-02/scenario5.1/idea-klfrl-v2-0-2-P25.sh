@@ -26,4 +26,5 @@ python simulated_averaging.py \
 --instance fedgrad-25-percent \
 --wandb_group CHANGE-RATIO-LENET-EMNIST-ARDIS-BLACKBOX \
 --log_folder logging \
+--use_trustworthy True \
 --device=cuda

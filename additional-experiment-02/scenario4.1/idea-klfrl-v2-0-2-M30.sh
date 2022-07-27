@@ -26,4 +26,5 @@ python simulated_averaging.py \
 --instance fedgrad-M30 \
 --wandb_group CHANGE-NUM-NET-LENET-EMNIST-ARDIS-BLACKBOX \
 --log_folder logging \
+--use_trustworthy True \
 --device=cuda
