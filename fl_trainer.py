@@ -750,6 +750,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             self._defender = WeightDiffClippingDefense(norm_bound=arguments['norm_bound'])
         elif arguments["defense_technique"] == "krum":
             num_adv = int(self.attacker_percent*self.part_nets_per_round)
+            print(f"num_adv of Krum: {num_adv}")
             self._defender = Krum(mode='krum', num_workers=self.part_nets_per_round, num_adv=num_adv)
         elif arguments["defense_technique"] == "multi-krum":
             num_adv = int(self.attacker_percent*self.part_nets_per_round)
@@ -778,7 +779,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 'clip': 0,
                 'server_lr': self.args_lr,
             }
-            theta = 4 if arguments['dataset'] == 'cifar10' else 10
+            theta = 4 if arguments['dataset'] == 'cifar10' else 15
             # print(f"theta: {theta}")
             self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=theta)
         elif arguments["defense_technique"] == "flame":
@@ -976,35 +977,35 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
              #First we update the local updates of each client in this training round
             
-            delta = np.zeros((self.num_nets, pytorch_total_params))
-            if memory_size > 0:
-                for net_idx, global_client_indx in enumerate(selected_node_indices):
-                    flatten_local_model = flatten_model(net_list[net_idx])
-                    local_update = flatten_local_model - self.flatten_net_avg
-                    delta[global_client_indx,:] = local_update
-                    # normalize delta
-                    if np.linalg.norm(delta[global_client_indx, :]) > 1:
-                        delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
+            # delta = np.zeros((self.num_nets, pytorch_total_params))
+            # if memory_size > 0:
+            #     for net_idx, global_client_indx in enumerate(selected_node_indices):
+            #         flatten_local_model = flatten_model(net_list[net_idx])
+            #         local_update = flatten_local_model - self.flatten_net_avg
+            #         delta[global_client_indx,:] = local_update
+            #         # normalize delta
+            #         if np.linalg.norm(delta[global_client_indx, :]) > 1:
+            #             delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
 
-                    delta_memory[global_client_indx, :, flr % memory_size] = delta[global_client_indx, :]
-                # Track the total vector from each individual client
-                summed_deltas = np.sum(delta_memory, axis=2)      
-            else:
-                for net_idx, global_client_indx in enumerate(selected_node_indices):
-                    flatten_local_model = flatten_model(net_list[net_idx])
-                    local_update = flatten_local_model - self.flatten_net_avg
-                    local_update = local_update.detach().cpu().numpy()
-                    delta[global_client_indx,:] = local_update
-                    # normalize delta
-                    if np.linalg.norm(delta[global_client_indx, :]) > 1:
-                        delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
-                # Track the total vector from each individual client
-                # print(f"delta={delta[selected_node_indices,:]}")
-                # print(f"summed_deltas[selected_node_indices,:].shape is: {summed_deltas[selected_node_indices,:].shape}")
+            #         delta_memory[global_client_indx, :, flr % memory_size] = delta[global_client_indx, :]
+            #     # Track the total vector from each individual client
+            #     summed_deltas = np.sum(delta_memory, axis=2)      
+            # else:
+            #     for net_idx, global_client_indx in enumerate(selected_node_indices):
+            #         flatten_local_model = flatten_model(net_list[net_idx])
+            #         local_update = flatten_local_model - self.flatten_net_avg
+            #         local_update = local_update.detach().cpu().numpy()
+            #         delta[global_client_indx,:] = local_update
+            #         # normalize delta
+            #         if np.linalg.norm(delta[global_client_indx, :]) > 1:
+            #             delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
+            #     # Track the total vector from each individual client
+            #     # print(f"delta={delta[selected_node_indices,:]}")
+            #     # print(f"summed_deltas[selected_node_indices,:].shape is: {summed_deltas[selected_node_indices,:].shape}")
 
-                summed_deltas[selected_node_indices,:] = summed_deltas[selected_node_indices,:] + delta[selected_node_indices,:]
-                # print(f"summed_deltas.shape is: {summed_deltas.shape}")
-                # print(f"summed_deltas={summed_deltas[selected_node_indices,:]}")
+            #     summed_deltas[selected_node_indices,:] = summed_deltas[selected_node_indices,:] + delta[selected_node_indices,:]
+            #     # print(f"summed_deltas.shape is: {summed_deltas.shape}")
+            #     # print(f"summed_deltas={summed_deltas[selected_node_indices,:]}")
 
             ### conduct defense here:
             if self.defense_technique == "no-defense":

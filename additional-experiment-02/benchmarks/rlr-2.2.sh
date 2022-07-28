@@ -26,4 +26,4 @@ python simulated_averaging.py \
 --instance updated-benchmark-RLR-25-percent-M30 \
 --wandb_group LENET-EMNIST-ARDIS-PGD-2 \
 --log_folder logging \
---device=cuda
+--device=cuda:1
