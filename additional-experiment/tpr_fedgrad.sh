@@ -2,15 +2,15 @@ python simulated_averaging.py \
 --lr 0.02 \
 --gamma 0.998 \
 --num_nets 200 \
---fl_round 1000 \
+--fl_round 1 \
 --part_nets_per_round 10 \
---local_train_period 2 \
---adversarial_local_training_period 2 \
+--local_train_period 10 \
+--adversarial_local_training_period 10 \
 --dataset cifar10 \
 --model vgg9 \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method krum-multilayer \
+--defense_method no-defense \
 --attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \
@@ -28,4 +28,4 @@ python simulated_averaging.py \
 --use_trustworthy True \
 --layer1 True \
 --layer2 True \
---device=cuda:1
+--device=cuda:2

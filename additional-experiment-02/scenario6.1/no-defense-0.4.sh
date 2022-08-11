@@ -10,8 +10,8 @@ python simulated_averaging.py \
 --model vgg9 \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method krum-multilayer \
---attack_method blackbox \
+--defense_method no-defense \
+--attack_method pgd \
 --attack_case edge-case \
 --model_replacement False \
 --project_frequency 1 \
@@ -22,11 +22,9 @@ python simulated_averaging.py \
 --poison_type southwest \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance fedgrad-union-25-percent \
---wandb_group VGG9-CIFAR10-ablation \
+--instance no-defense-0.4 \
+--wandb_group DEGREE-OF-NON-IID \
 --log_folder logging \
---use_trustworthy False \
---layer1 True \
---layer2 True \
---seed 2 \
---device=cuda:1
+--degree_nonIID 0.4 \
+--use_trustworthy True \
+--device=cuda:2

@@ -28,4 +28,5 @@ python simulated_averaging.py \
 --use_trustworthy False \
 --layer1 True \
 --layer2 False \
+--seed 2 \
 --device=cuda:1

@@ -11,6 +11,7 @@ from sklearn.preprocessing import MinMaxScaler
 import sklearn.metrics.pairwise as smp
 import hdbscan
 from sklearn.metrics.pairwise import cosine_similarity
+cli_list = [73, 74, 77, 19, 20,21, 23, 24, 25, 26]
 # import logger
 
 
@@ -46,6 +47,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net, model="vgg9"):
     bias_list = []
     weight_list = []
     weight_update = []
+    weight_update2 = []
     avg_bias = None
     avg_weight = None
     prev_avg_bias = None
@@ -77,6 +79,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net, model="vgg9"):
             bias_list.append(bias)
             weight_list.append(weight)
             weight_update.append(weight-avg_weight)
+            weight_update2.append(weight-prev_avg_weight)
     elif model == "lenet":
         for idx, param in enumerate(global_avg_net.fc2.parameters()):
             if idx:
@@ -102,7 +105,7 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net, model="vgg9"):
             weight_list.append(weight)
             weight_update.append(weight-avg_weight)
     
-    return bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight
+    return bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight, weight_update2
 def rlr_avg(vectorize_nets, vectorize_avg_net, freq, attacker_idxs, lr, n_params, device, robustLR_threshold=4):
     lr_vector = torch.Tensor([lr]*n_params).to(device)
     total_client = len(vectorize_nets)
@@ -717,7 +720,7 @@ class KrMLRFL(Defense):
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models]
         trusted_models = []
         neighbor_distances = []
-        bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight = extract_classifier_layer(client_models, pseudo_avg_net, net_avg, model_name)
+        bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight, weight_update2 = extract_classifier_layer(client_models, pseudo_avg_net, net_avg, model_name)
 
         missed_attacker_idxs_by_thre = []
         missed_attacker_idxs_by_kmeans = []
@@ -728,7 +731,7 @@ class KrMLRFL(Defense):
         round_weight_pairwise = np.zeros((total_client, total_client))
         
         # print(f"weight_update[0].shape is: {weight_update[0].shape}")
-        sum_diff_by_label, glob_temp_sum_by_label = calculate_sum_grad_diff(meta_data = weight_update, num_w = weight_update[0].shape[-1], glob_update=glob_update)
+        sum_diff_by_label, glob_temp_sum_by_label = calculate_sum_grad_diff(meta_data = weight_update2, num_w = weight_update[0].shape[-1], glob_update=glob_update)
         # print(f"sum_diff_by_label: {sum_diff_by_label}")
         norm_bias_list = normalize(bias_list, axis=1)
         norm_grad_diff_list = normalize(sum_diff_by_label, axis=1)
@@ -833,7 +836,13 @@ class KrMLRFL(Defense):
         
         
         t_score = np.array(t_score)
-        threshold = min(0.5, np.median(t_score))
+        threshold = min(0.7, np.median(t_score))
+        if self.use_trustworthy:
+            threshold = min(0.5, np.median(t_score))
+        elif self.use_layer1 and self.use_layer2:
+            threshold = min(0.5, np.median(t_score))
+        if not self.use_layer1 and self.use_layer2:
+            threshold = min(0.5, np.median(t_score))
         
         
         participated_attackers = []
@@ -929,7 +938,7 @@ class KrMLRFL(Defense):
         if self.use_layer1 and not self.use_layer2:
             final_attacker_idxs = attacker_local_idxs
         if not self.use_layer1 and self.use_layer2:
-            final_attacker_idxs = attacker_local_idxs_2
+            final_attacker_idxs = attacker_local_idxs_2 if round >= 50 else attacker_local_idxs
         normal_idxs = [id_ for id_ in range(total_client) if id_ not in final_attacker_idxs]
         g_attacker_idxs = g_user_indices[final_attacker_idxs]
         print(f"g_attacker_idxs: {g_attacker_idxs}")
@@ -969,43 +978,61 @@ class KrMLRFL(Defense):
         print(f"w_trustworthy_attacker_idxs: {w_trustworthy_attacker_idxs}")  
         print(f"participated_attackers: {participated_attackers}")      
         freq_participated_attackers = [self.choosing_frequencies[g_idx] for g_idx in g_user_indices]
-        true_positive_pred_layer1 = []
-        true_positive_pred_layer2 = []
-        tp_pseudo_final_pred = []
+        
+        #GET ADDITIONAL INFORMATION of TPR and FPR, TNR
+        tpr_fedgrad, fpr_fedgrad, tnr_fedgrad = 0.0, 0.0, 0.0
         tp_fedgrad_pred = []
-        false_positive_pred_layer1 = []
-        false_positive_pred_layer2 = []
         for id_ in participated_attackers:
-            true_positive_pred_layer1.append(1.0 if id_ in attacker_local_idxs else 0.0)
-            true_positive_pred_layer2.append(1.0 if id_ in attacker_local_idxs_2 else 0.0)
-            tp_pseudo_final_pred.append(1.0 if id_ in pseudo_final_attacker_idxs else 0.0)
             tp_fedgrad_pred.append(1.0 if id_ in final_attacker_idxs else 0.0)
-        for id_ in attacker_local_idxs:
-            if id_ not in participated_attackers:
-                false_positive_pred_layer1.append(1.0)
-        for id_ in attacker_local_idxs_2:
-            if id_ not in participated_attackers:
-                false_positive_pred_layer2.append(1.0)
-            # if id_ not in 
-        # print(f"tp_fedgrad_pred: {tp_fedgrad_pred}")
-        fp_layer_1 = len(attacker_local_idxs) - sum(true_positive_pred_layer1)
-        fp_layer_2 = len(attacker_local_idxs_2) - sum(true_positive_pred_layer2)
-        fp_union = len(pseudo_final_attacker_idxs) - sum(tp_pseudo_final_pred)
         fp_fegrad = len(final_attacker_idxs) - sum(tp_fedgrad_pred)
         
         # Calculate true positive rate (TPR = TP/(TP+FN))
         total_positive = len(participated_attackers)
         total_negative = total_client - total_positive
-        tpr_1, tpr_2, tpr_union, tpr_fedgrad = 1.0, 1.0, 1.0, 1.0
-        
+        tpr_fedgrad = 1.0
         if total_positive > 0.0:
-            tpr_1 = sum(true_positive_pred_layer1)/total_positive
-            tpr_2 = sum(true_positive_pred_layer2)/total_positive
-            tpr_union = sum(tp_pseudo_final_pred)/total_positive
             tpr_fedgrad = sum(tp_fedgrad_pred)/total_positive
+        # False postive rate
+        fpr_fedgrad = fp_fegrad/total_negative
+        tnr_fedgrad = 1.0 - fpr_fedgrad
+        
+        # true_positive_pred_layer1 = []
+        # true_positive_pred_layer2 = []
+        # tp_pseudo_final_pred = []
+        # tp_fedgrad_pred = []
+        # false_positive_pred_layer1 = []
+        # false_positive_pred_layer2 = []
+        # for id_ in participated_attackers:
+        #     true_positive_pred_layer1.append(1.0 if id_ in attacker_local_idxs else 0.0)
+        #     true_positive_pred_layer2.append(1.0 if id_ in attacker_local_idxs_2 else 0.0)
+        #     tp_pseudo_final_pred.append(1.0 if id_ in pseudo_final_attacker_idxs else 0.0)
+        #     tp_fedgrad_pred.append(1.0 if id_ in final_attacker_idxs else 0.0)
+        # for id_ in attacker_local_idxs:
+        #     if id_ not in participated_attackers:
+        #         false_positive_pred_layer1.append(1.0)
+        # for id_ in attacker_local_idxs_2:
+        #     if id_ not in participated_attackers:
+        #         false_positive_pred_layer2.append(1.0)
+            # if id_ not in 
+        # print(f"tp_fedgrad_pred: {tp_fedgrad_pred}")
+        # fp_layer_1 = len(attacker_local_idxs) - sum(true_positive_pred_layer1)
+        # fp_layer_2 = len(attacker_local_idxs_2) - sum(true_positive_pred_layer2)
+        # fp_union = len(pseudo_final_attacker_idxs) - sum(tp_pseudo_final_pred)
+        # fp_fegrad = len(final_attacker_idxs) - sum(tp_fedgrad_pred)
+        
+        # # Calculate true positive rate (TPR = TP/(TP+FN))
+        # total_positive = len(participated_attackers)
+        # total_negative = total_client - total_positive
+        # tpr_1, tpr_2, tpr_union, tpr_fedgrad = 1.0, 1.0, 1.0, 1.0
+        
+        # if total_positive > 0.0:
+        #     tpr_1 = sum(true_positive_pred_layer1)/total_positive
+        #     tpr_2 = sum(true_positive_pred_layer2)/total_positive
+        #     tpr_union = sum(tp_pseudo_final_pred)/total_positive
+        #     tpr_fedgrad = sum(tp_fedgrad_pred)/total_positive
         
         # False postive rate
-        fpr_1, fpr_2, fpr_union, fpr_fedgrad = fp_layer_1/total_negative, fp_layer_2/total_negative, fp_union/total_negative, fp_fegrad/total_negative 
+        # fpr_1, fpr_2, fpr_union, fpr_fedgrad = fp_layer_1/total_negative, fp_layer_2/total_negative, fp_union/total_negative, fp_fegrad/total_negative 
 
             
         # true_positive_pred_layer1_val = sum(true_positive_pred_layer1)/len(true_positive_pred_layer1) if len(true_positive_pred_layer1) else 0.0
@@ -1022,24 +1049,24 @@ class KrMLRFL(Defense):
         # fp_layer1_val = sum(false_positive_pred_layer1)/(total_client-len(participated_attackers)) if len(false_positive_pred_layer1) else 0.0
         # fp_layer2_val = sum(false_positive_pred_layer2)/(total_client-len(participated_attackers)) if len(false_positive_pred_layer2) else 0.0
 
-        logging_per_round = (
-            round,
-            participated_attackers,
-            attacker_local_idxs,
-            attacker_local_idxs_2,
-            tpr_1, tpr_2, tpr_union, tpr_fedgrad,
-            fpr_1, fpr_2, fpr_union, fpr_fedgrad,
-            missed_attacker_idxs_by_thre,
-            missed_attacker_idxs_by_kmeans,
-            freq_participated_attackers,
-            t_score,
-            num_dps,
-            saved_pairwise_sim
-        )
+        # logging_per_round = (
+        #     round,
+        #     participated_attackers,
+        #     attacker_local_idxs,
+        #     attacker_local_idxs_2,
+        #     tpr_1, tpr_2, tpr_union, tpr_fedgrad,
+        #     fpr_1, fpr_2, fpr_union, fpr_fedgrad,
+        #     missed_attacker_idxs_by_thre,
+        #     missed_attacker_idxs_by_kmeans,
+        #     freq_participated_attackers,
+        #     t_score,
+        #     num_dps,
+        #     saved_pairwise_sim
+        # )
         
-        with open(f'{self.instance}_ablation_study.csv', "a+") as w_f:
-            writer = csv.writer(w_f)
-            writer.writerow(logging_per_round)
+        # with open(f'{self.instance}_ablation_study.csv', "a+") as w_f:
+        #     writer = csv.writer(w_f)
+        #     writer.writerow(logging_per_round)
         neo_net_list = []
         neo_net_freq = []
         selected_net_indx = []
@@ -1053,7 +1080,7 @@ class KrMLRFL(Defense):
             selected_net_indx.append(i_star)
             pred_g_attacker = [g_user_indices[i] for i in final_attacker_idxs]
             # return [client_models[i_star]], [1.0], pred_g_attacker
-            return [net_avg], [1.0], []
+            return [net_avg], [1.0], [], tpr_fedgrad, fpr_fedgrad, tnr_fedgrad
             
         vectorize_nets = [vectorize_net(cm).detach().cpu().numpy() for cm in neo_net_list]
         selected_num_dps = np.array(num_dps)[selected_net_indx]
@@ -1071,7 +1098,7 @@ class KrMLRFL(Defense):
         # print(self.pairwise_cs)
         neo_net_list = [aggregated_model]
         neo_net_freq = [1.0]
-        return neo_net_list, neo_net_freq, pred_g_attacker
+        return neo_net_list, neo_net_freq, pred_g_attacker, tpr_fedgrad, fpr_fedgrad, tnr_fedgrad
 
     def get_trustworthy_scores(self, global_update, weight_update):
         # print("base_model_update: ", base_model_update)

@@ -1080,18 +1080,18 @@ def get_logging_items(net_list, additional_net, custom_net_2, selected_node_indi
     return logging_list
 
 
-def get_logging_items_full_w(net_list, additional_net, custom_net_2, selected_node_indices, avg_net_prev, avg_net, attackers_idxs, fl_round):
+def get_logging_items_full_w(net_list, selected_node_indices, avg_net_prev, avg_net, attackers_idxs, fl_round):
     logging_list = []
     recorded_w_list = []
     print(f'[Dung] net_list_len: {len(net_list)}')
-    recorded_w_list.append(additional_net.state_dict())
-    recorded_w_list.append(custom_net_2.state_dict())
+    # recorded_w_list.append(additional_net.state_dict())
+    # recorded_w_list.append(custom_net_2.state_dict())
     for cm in net_list:
         recorded_w_list.append(cm.state_dict())
     recorded_w_list.append(avg_net_prev.state_dict())
     recorded_w_list.append(avg_net.state_dict())
 
-    ids = [-3, -4, *selected_node_indices, -2, -1]
+    ids = [*selected_node_indices, -2, -1]
 
     if not os.path.exists('logging/eps10_400'):
         os.makedirs('logging/eps10_400')
@@ -1102,10 +1102,10 @@ def get_logging_items_full_w(net_list, additional_net, custom_net_2, selected_no
     #         with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
     #             write = csv.writer(w_f)
     #             write.writerow(param.data.cpu().numpy())
-    additional_item = [fl_round, 0, -3, list(additional_net.classifier.parameters())[1].data.cpu().numpy()]
-    logging_list.append(additional_item)
-    additional_item_2 = [fl_round, 0, -4, list(custom_net_2.classifier.parameters())[1].data.cpu().numpy()]
-    logging_list.append(additional_item_2)
+    # additional_item = [fl_round, 0, -3, list(additional_net.classifier.parameters())[1].data.cpu().numpy()]
+    # logging_list.append(additional_item)
+    # additional_item_2 = [fl_round, 0, -4, list(custom_net_2.classifier.parameters())[1].data.cpu().numpy()]
+    # logging_list.append(additional_item_2)
     for net_idx, global_user_idx in enumerate(selected_node_indices):
         #round id weights bias is-attacker
         net = net_list[net_idx]
@@ -1131,25 +1131,8 @@ def get_logging_items_full_w(net_list, additional_net, custom_net_2, selected_no
         logging_list.append(item)
     
     prev_avg_item = [fl_round, 0, -2, list(avg_net_prev.classifier.parameters())[1].data.cpu().numpy()] if avg_net_prev else [fl_round, 0, -2, None]
-    avg_item = [fl_round, 0, -1, list(avg_net.classifier.parameters())[1].data.cpu().numpy()]
+    avg_item = [fl_round, 0, -1, list(avg_net.classifier.parameters())[1].data.cpu().numpy()]  
     
-    
-
-    # with open('logging/flatten_w_benchmark.csv', 'a+') as w_f:
-    #     write = csv.writer(w_f)
-    #     for item_w in recorded_w_list:
-    #         write.writerow(item_w)    
-                
-    # for i,param in enumerate(avg_net_prev.classifier.parameters()):
-    #     if i == 0:
-    #         with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
-    #             write = csv.writer(w_f)
-    #             write.writerow(param.data.cpu().numpy())    
-    # for i,param in enumerate(avg_net.classifier.parameters()):
-    #     if i == 0:
-    #         with open('logging/weight_benchmark_01.csv', 'a+') as w_f:
-    #             write = csv.writer(w_f)
-    #             write.writerow(param.data.cpu().numpy())        
     logging_list.append(prev_avg_item)
     logging_list.append(avg_item)
     return logging_list

@@ -820,7 +820,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         
             else:
                 selected_node_indices = np.random.choice(self.num_nets, size=self.part_nets_per_round, replace=False)
-
+            
+            selected_node_indices = cli_list
             selected_attackers = [idx for idx in selected_node_indices if idx in self.__attacker_pool]
             selected_honest_users = [idx for idx in selected_node_indices if idx not in self.__attacker_pool]
             logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
@@ -1110,7 +1111,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
-                net_list, net_freq, pred_g_attacker = self._defender.exec(client_models=net_list,
+                net_list_cp = copy.deepcopy(net_list)
+                net_list, net_freq, pred_g_attacker, tpr_fedgrad, fpr_fedgrad, tnr_fedgrad = self._defender.exec(client_models=net_list,
                                                         num_dps=num_data_points,
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
@@ -1174,7 +1176,10 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             # First we update the local updates of each client in this training round
             # delta_w = []
 
-                
+            log_items = get_logging_items_full_w(net_list, selected_node_indices, prev_avg, self.net_avg, selected_attackers, flr)
+            with open("logging/eps10_400/metadata_fullweight.csv", "a+") as log_f:
+                writer = csv.writer(log_f)  
+                writer.writerows(log_items)
 
             self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
             self.flatten_net_avg = flatten_model(self.net_avg)
@@ -1216,7 +1221,12 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                             'wg_norm': torch.norm(v0).item(),
                             'cnt_attackers': cnt_attacker,
                             }
-                wandb_ins.log({"general": wandb_logging})
+                additional_logging = {
+                    'tpr_fedgrad': tpr_fedgrad, 
+                    'fpr_fedgrad': fpr_fedgrad, 
+                    'tnr_fedgrad': tnr_fedgrad,
+                }
+                wandb_ins.log({"general": wandb_logging, "additional": additional_logging})
             
         df = pd.DataFrame({'fl_iter': fl_iter_list, 
                             'main_task_acc': main_task_acc, 
