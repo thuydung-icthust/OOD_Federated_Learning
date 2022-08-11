@@ -14,7 +14,7 @@ from utils import *
 from helpers import *
 from defense import *
 import datasets
-
+import time
 import csv
 
 class Net(nn.Module):
@@ -802,6 +802,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         wg_norm_list = []
         # additional information tpr_fedgrad, fpr_fedgrad, tnr_fedgrad
         tpr_fedgrad, fpr_fedgrad, tnr_fedgrad = 0.0, 0.0, 0.0
+        layer1_inf_time, layer2_inf_t, fedgrad_t = 0.0, 0.0, 0.0    
         # let's conduct multi-round training
         prev_avg = copy.deepcopy(self.net_avg)
         self.flatten_net_avg = flatten_model(self.net_avg)
@@ -975,38 +976,45 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                         norm_diff_collector.append(honest_norm_diff)
 
 
-             #First we update the local updates of each client in this training round
+            #First we update the local updates of each client in this training round
             
-            # delta = np.zeros((self.num_nets, pytorch_total_params))
-            # if memory_size > 0:
-            #     for net_idx, global_client_indx in enumerate(selected_node_indices):
-            #         flatten_local_model = flatten_model(net_list[net_idx])
-            #         local_update = flatten_local_model - self.flatten_net_avg
-            #         delta[global_client_indx,:] = local_update
-            #         # normalize delta
-            #         if np.linalg.norm(delta[global_client_indx, :]) > 1:
-            #             delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
+            # Time for FoolsGold only
+            foolsgold_start_t = time.time()*1000
+            if self.defense_technique == "foolsgold":
+                delta = np.zeros((self.num_nets, pytorch_total_params))
+                if memory_size > 0:
+                    for net_idx, global_client_indx in enumerate(selected_node_indices):
+                        flatten_local_model = flatten_model(net_list[net_idx])
+                        local_update = flatten_local_model - self.flatten_net_avg
+                        delta[global_client_indx,:] = local_update
+                        # normalize delta
+                        if np.linalg.norm(delta[global_client_indx, :]) > 1:
+                            delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
 
-            #         delta_memory[global_client_indx, :, flr % memory_size] = delta[global_client_indx, :]
-            #     # Track the total vector from each individual client
-            #     summed_deltas = np.sum(delta_memory, axis=2)      
-            # else:
-            #     for net_idx, global_client_indx in enumerate(selected_node_indices):
-            #         flatten_local_model = flatten_model(net_list[net_idx])
-            #         local_update = flatten_local_model - self.flatten_net_avg
-            #         local_update = local_update.detach().cpu().numpy()
-            #         delta[global_client_indx,:] = local_update
-            #         # normalize delta
-            #         if np.linalg.norm(delta[global_client_indx, :]) > 1:
-            #             delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
-            #     # Track the total vector from each individual client
-            #     # print(f"delta={delta[selected_node_indices,:]}")
-            #     # print(f"summed_deltas[selected_node_indices,:].shape is: {summed_deltas[selected_node_indices,:].shape}")
+                        delta_memory[global_client_indx, :, flr % memory_size] = delta[global_client_indx, :]
+                    # Track the total vector from each individual client
+                    summed_deltas = np.sum(delta_memory, axis=2)      
+                else:
+                    for net_idx, global_client_indx in enumerate(selected_node_indices):
+                        flatten_local_model = flatten_model(net_list[net_idx])
+                        local_update = flatten_local_model - self.flatten_net_avg
+                        local_update = local_update.detach().cpu().numpy()
+                        delta[global_client_indx,:] = local_update
+                        # normalize delta
+                        if np.linalg.norm(delta[global_client_indx, :]) > 1:
+                            delta[global_client_indx, :] = delta[global_client_indx, :] / np.linalg.norm(delta[global_client_indx, :])
+                    # Track the total vector from each individual client
+                    # print(f"delta={delta[selected_node_indices,:]}")
+                    # print(f"summed_deltas[selected_node_indices,:].shape is: {summed_deltas[selected_node_indices,:].shape}")
 
-            #     summed_deltas[selected_node_indices,:] = summed_deltas[selected_node_indices,:] + delta[selected_node_indices,:]
-            #     # print(f"summed_deltas.shape is: {summed_deltas.shape}")
-            #     # print(f"summed_deltas={summed_deltas[selected_node_indices,:]}")
+                    summed_deltas[selected_node_indices,:] = summed_deltas[selected_node_indices,:] + delta[selected_node_indices,:]
+                    # print(f"summed_deltas.shape is: {summed_deltas.shape}")
+                    # print(f"summed_deltas={summed_deltas[selected_node_indices,:]}")
+            foolsgold_end_t = time.time()*1000
+            foolsgold_t = foolsgold_end_t - foolsgold_start_t
 
+            # DUNG: MEASURE INFERENCE TIME
+            start_t = time.time()*1000
             ### conduct defense here:
             if self.defense_technique == "no-defense":
                 pass
@@ -1073,7 +1081,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
-                net_list, net_freq, pred_g_attacker, tpr_fedgrad, fpr_fedgrad, tnr_fedgrad = self._defender.exec(client_models=net_list,
+                net_list, net_freq, pred_g_attacker, tpr_fedgrad, fpr_fedgrad, tnr_fedgrad, layer1_inf_time, layer2_inf_t, fedgrad_t = self._defender.exec(client_models=net_list,
                                                         num_dps=num_data_points,
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
@@ -1130,6 +1138,13 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         
             else:
                 NotImplementedError("Unsupported defense method !")
+            
+            end_t = time.time()*1000
+            ref_time = end_t - start_t # For whole defenses
+            if self.defense_technique == 'foolsgold':
+                ref_time += foolsgold_t
+            
+            
 
 
             # after local training periods
@@ -1141,6 +1156,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
             self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
             self.flatten_net_avg = flatten_model(self.net_avg)
+            end_full_t = time.time()*1000
+            full_inf_t = end_full_t - start_t
 
             prev_avg = copy.deepcopy(self.net_avg)
             if self.defense_technique == "weak-dp":
@@ -1178,11 +1195,16 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                             'adv_norm_diff': adv_norm_diff, 
                             'wg_norm': torch.norm(v0).item(),
                             'cnt_attackers': cnt_attacker,
+                            'ref_time': ref_time,
+                            'full_inf_t': full_inf_t,
                             }
                 additional_logging = {
                     'tpr_fedgrad': tpr_fedgrad, 
                     'fpr_fedgrad': fpr_fedgrad, 
                     'tnr_fedgrad': tnr_fedgrad,
+                    'layer1_inf_time': layer1_inf_time, 
+                    'layer2_inf_t': layer2_inf_t,
+                    'fedgrad_t':fedgrad_t,
                 }
                 wandb_ins.log({"general": wandb_logging, "additional": additional_logging})
                 # wandb_ins.log({"additional": additional_logging})
