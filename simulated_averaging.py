@@ -107,7 +107,7 @@ if __name__ == "__main__":
                         help='to use trustworthy scores or not only for fedgrad') 
     parser.add_argument('--degree_nonIID', type=float, default=0.5,
                         help='the degree_nonIID of data distribution between clients')   
-    parser.add_argument('--pdr', type=float, default=0.4,
+    parser.add_argument('--dpr', type=float, default=0.5,
                         help='the poisoned data rate inside training data of a compromised client')               
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()

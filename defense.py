@@ -2180,7 +2180,7 @@ class DeepSight(Defense):
         s = np.median(local_models_norms)
         # print(f"s: {s}")
         lambda_idxs = []
-        for idx in acpt_models_idxs:
+        for idx in range(n):
             vectorize_diff = w[idx] - flatten_g_t
             weight_diff_norm = norm(vectorize_diff)
             term2 = s/weight_diff_norm

@@ -865,7 +865,8 @@ def load_poisoned_dataset_updated(args):
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
     # benign_train_data_loader = None
     # CHANGE CODE TO LOAD POISONED DATASET by Dung
-    pdr = args.pdr or 0.2
+    # default dpr: 0.33 for CIFAR-10 and 0.5 for EMNIST
+    dpr = args.dpr or 0.5
     if args.dataset in ("mnist", "emnist"):
         fraction=0.15 #0.0334 #0.01 #0.1 #0.0168 #10
         emnist_train_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
@@ -929,7 +930,7 @@ def load_poisoned_dataset_updated(args):
         clean_trainset = copy.deepcopy(poisoned_emnist_dataset)
 
         # NEW: This step tries to calculate number of poisoned samples needed. 
-        total_poisoned_samples = int(pdr*num_sampled_data_points/(1.0-pdr))
+        total_poisoned_samples = int(dpr*num_sampled_data_points/(1.0-dpr))
         print(f"total_poisoned_samples: {total_poisoned_samples}")
         samped_poisoned_data_indices = np.random.choice(total_ardis_samples, total_poisoned_samples, replace=False)
         print(f"samped_poisoned_data_indices: {samped_poisoned_data_indices}")
@@ -998,7 +999,7 @@ def load_poisoned_dataset_updated(args):
         plt.xlabel("Label distribution")
         plt.ylabel("No. of sample per label")
         plt.title("Poison client data's distribution")
-        plt.savefig(f"emnist_distribution_label_pdr_{pdr}.png")
+        plt.savefig(f"emnist_distribution_label_dpr_{dpr}.png")
         
     elif args.dataset == "cifar10":
         num_sampled_data_points = 400 # M
