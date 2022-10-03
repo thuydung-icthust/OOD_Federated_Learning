@@ -1,6 +1,9 @@
 import pdb
 import pandas as pd
 import torch
+from torchvision import transforms
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
 
 from scipy.special import logit, expit
 from utils import *
@@ -1980,19 +1983,40 @@ class UpperBoundByClass(Defense):
         
         return neo_net_list, neo_net_freq  
 
+class MyDataset(Dataset):
+    def __init__(self, data, targets, transform=None):
+        self.data = data
+        self.targets = torch.LongTensor(targets)
+        self.transform = transform
+        
+    def __getitem__(self, index):
+        x = self.data[index]
+        y = self.targets[index]
+        
+        if self.transform:
+            x = Image.fromarray(self.data[index].astype(np.uint8).transpose(1,2,0))
+            x = self.transform(x)
+        
+        return x, y
+    
+    def __len__(self):
+        return len(self.data)
+
 class DeepSight(Defense):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, model_name, *args, **kwargs):
         self.tau = 0.33 # need to verify 
         self.seeds = [1,2,3] # not clear in the paper
         self.total_labels = 10 # may be changed later
-        self.input_dim = None
-        self.total_samples = 20000
+        self.input_dim = [28,28]
+        self.total_samples = 64
+        self.batch_size = 32
+        self.model = model_name
     def calculate_neups(self, g_t, w_i):
         w_diffs = []
         e_updates = []
-        g_b, g_w = extract_last_layer(g_t)
-        i_b, i_w = extract_last_layer(w_i)
-        b_diff = g_b-g_i
+        g_b, g_w = extract_last_layer(g_t, self.model)
+        i_b, i_w = extract_last_layer(w_i, self.model)
+        b_diff = i_b-g_b
         total_last_params = len(g_w)
         cnt_params_per_label = int(total_last_params/self.total_labels)
         for k in range(self.total_labels):
@@ -2001,7 +2025,7 @@ class DeepSight(Defense):
             w_diff = i_w[start_i, end_i] - g_w[start_i, end_i]
             w_diffs.append(w_diff)
         for k in range(self.total_labels):
-            e_update = math.abs(b_diff[k]) + math.abs(math.sum(w_diffs[k]))
+            e_update = np.abs(b_diff[k]) + np.abs(np.sum(w_diffs[k]))
             e_updates.append(e_update)
         e_updates_normed = [e_updates[i]**2/(norm(e_updates)**2) for i in range(self.total_labels)]
         return e_updates_normed
@@ -2012,23 +2036,32 @@ class DeepSight(Defense):
         threshold_exceeding = np.count_nonzero(neups > threshold_eta)
         return threshold_exceeding
     
-    def calculate_ddif(self, g_t, w_i, input_matrix):
+    def calculate_ddif(self, g_t, w_i, input_matrix, device):
         # inference step
         output_g_list = []
         output_list = []
-        for data in input_matrix:
-            output = w_i(data)
-            output_g = g_t(data)
+
+        for data, target in input_matrix:
+            data, target = data.to(device), target.to(device)
+            output = w_i(data).to(device).cpu().data.numpy()
+            output_g = g_t(data).to(device).cpu().data.numpy()
             output_g_list.append(output_g)
             output_list.append(output)
+
         ddif = []
         np_output_list = np.asarray(output_list)
+        np_output_list = np_output_list.transpose((-1, 0, 1))
+        np_output_list = np_output_list.reshape((np_output_list.shape[0], -1))
         np_output_g_list = np.asarray(output_g_list)
+        np_output_g_list = np_output_g_list.transpose((-1, 0, 1))
+        np_output_g_list = np_output_g_list.reshape((np_output_g_list.shape[0], -1))
+        # print(f"np_output_list shape is: {np_output_list.shape}")
         for i in range(self.total_labels):
-            client_pred = np.sum(np_output_list)[:,i]
-            server_pred = np.sum(np_output_g_list)[:,i]
+            client_pred = np.sum(np_output_list[i,:])
+            server_pred = np.sum(np_output_g_list[i,:])
             ddif_i = 1/self.total_samples*client_pred/server_pred
             ddif.append(ddif_i)
+        # print(f"ddif: {ddif}")
         return ddif
 
     def distsFromClust(self, clusters, N):
@@ -2037,29 +2070,38 @@ class DeepSight(Defense):
             for j in range(N):
                 pairwise_dists[i,j] = 0 if clusters[i] == clusters[j] else 1
         return pairwise_dists
+    
     def clustering(self, N, neups, ddifs, cosine_distances):
         cs_distance_matrix = cosine_distances
         hdbscan_cs = hdbscan.HDBSCAN(metric='precomputed')
+        # print(f"cs_distance_matrix: {cs_distance_matrix}")
         hdbscan_cs.fit(cs_distance_matrix)
         cosine_clusters = hdbscan_cs.labels_
         cosine_clusters_dists = self.distsFromClust(cosine_clusters, N)
-
+        # print(f"cosine_clusters: {cosine_clusters}")
         hdbscan_neups = hdbscan.HDBSCAN(algorithm='best')
-        hdbscan_neups.fit(data=neups)
+        hdbscan_neups.fit(neups)
+        # print(f"neups: {neups}")
         neup_clusters = hdbscan_neups.labels_
         neup_cluster_dists = self.distsFromClust(neup_clusters, N)
-
+        # print(f"diffs: {ddifs}")
         ddif_clusters_dists_list = []
         for ddif in ddifs:
             ddif_cluster = hdbscan.HDBSCAN(algorithm='best')
             ddif_cluster.fit(ddif)
             ddif_clusters = ddif_cluster.labels_
+            # print(f"ddif_clusters: {ddif_clusters}")
             ddif_clusters_dists = self.distsFromClust(ddif_clusters, N)
             ddif_clusters_dists_list.append(ddif_clusters_dists)
-        merged_ddif_clust_dists = np.average(ddif_clusters_dists_list, dim=1)
-        print(f"merged_ddif_clust_dists: {merged_ddif_clust_dists}")
-        merged_distances = np.average(merged_ddif_clust_dists, neup_cluster_dists, cosine_clusters_dists)
-        clusters = hdbscan.HDBSCAN(algorithm='best').fit(merged_distances)
+        # print(f"ddif_clusters_dists_list: {ddif_clusters_dists_list}")
+        merged_ddif_clust_dists = np.average(ddif_clusters_dists_list, axis=0)
+        # print(f"merged_ddif_clust_dists: {merged_ddif_clust_dists.shape}")
+        # print(f"neup_cluster_dists: {neup_cluster_dists.shape}")
+        # print(f"cosine_clusters_dists: {cosine_clusters_dists.shape}")
+        # merged_distances = np.average((merged_ddif_clust_dists, neup_cluster_dists, cosine_clusters_dists), axis)
+        merged_distances = np.mean(np.array([ merged_ddif_clust_dists, neup_cluster_dists,  cosine_clusters_dists]), axis=0 )
+        # print(f"merged_distances:{merged_distances.shape}")
+        clusters = hdbscan.HDBSCAN(metric='precomputed').fit(merged_distances)
         final_clusters = clusters.labels_
         return final_clusters
 
@@ -2068,11 +2110,11 @@ class DeepSight(Defense):
         n = len(w) # number of models
         # input_dim: dimension of a single input
         cosine_distances = np.zeros((n,n))
-        g_bias, g_weight = extract_last_layer(g_t)
+        g_bias, g_weight = extract_last_layer(g_t, self.model)
         for i in range(n):
             for j in range(n):
-                i_b, i_w = extract_last_layer(client_models[i])
-                j_b, j_w = extract_last_layer(client_models[j])
+                i_b, i_w = extract_last_layer(client_models[i], self.model)
+                j_b, j_w = extract_last_layer(client_models[j], self.model)
                 update_i = i_b - g_bias
                 update_j = j_b - g_bias
                 cosine_distances[i,j]= 1.0 - dot(update_i, update_j)/(norm(update_i)*norm(update_j))
@@ -2081,27 +2123,49 @@ class DeepSight(Defense):
         input_matrices = []
         for s in self.seeds:
             np.random.seed(s)
-            input_matrix = np.random.randn((20000, self.input_dim))
-            input_matrices.append(input_matrices)
+            # input_matrix = np.random.randn((20000, self.input_dim))
+            input_matrix = np.random.randn(self.total_samples,28,28) # fixed later
+            # print(f"input_matrix.shape is: {input_matrix.shape}")
+            input_matrices.append(input_matrix)
         ddifs_list = []
         for input_matrix in input_matrices:
-            ddifs = [self.calculate_ddif(g_t, client_model, input_matrix) for client_model in client_models]
+            input_matrix = input_matrix.reshape(input_matrix.shape[0], 28, 28).astype('float32')
+            input_matrix = torch.tensor(input_matrix).type(torch.uint8)
+            noise_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
+                       transform=transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.1307,), (0.3081,))
+                       ]))
+            noise_dataset.data = input_matrix
+            noise_dataset.targets = np.zeros(self.total_samples)
+            # print("hihi")
+            # targets = np.zeros(self.total_samples)
+            # transform = transforms.Compose([transforms.Resize((28,28)), transforms.ToTensor()])
+            # dataset = MyDataset(input_matrix, targets, transform=transform)
+            # dataloader = DataLoader(dataset, batch_size=self.batch_size)
+            # print(f"dataloader: {dataloader.dataset}")
+            dataloader = torch.utils.data.DataLoader(noise_dataset, batch_size=32, shuffle=True)
+            ddifs = [self.calculate_ddif(g_t, client_model, dataloader, device) for client_model in client_models]
             ddifs_list.append(ddifs)
         classificat_boundary = np.median(te_list)/2
         # first classification layer:
         labels = [1 if te_list[i] <= classificat_boundary else 0 for i in range(n)]
+        print(f"labels: {labels}")
         final_clusters = self.clustering(n, neups_list, ddifs_list, cosine_distances)
+        final_clusters = np.asarray(final_clusters)
         print(f"final_clusters: {final_clusters}")
         cluster_list = np.unique(final_clusters)
         acpt_models_idxs = []
+        labels = np.asarray(labels)
         for cluster in cluster_list:
-            indexes = np.argwhere(final_clusters==cluster)
-            amount_of_positives = sum(labels[indexes])/len(indexes)
+            indexes = np.argwhere(final_clusters==cluster).flatten()
+            # print(f"indexes: {indexes}")
+            amount_of_positives = np.sum(labels[indexes])/len(indexes)
             if amount_of_positives < self.tau:
                 for idx in indexes:
                     acpt_models_idxs.append(idx)
         print(f"acpt_models_idxs: {acpt_models_idxs}")
-            # we reconstruct the weighted averaging here:
+        # we reconstruct the weighted averaging here:
         selected_num_dps = np.array(num_dps)[acpt_models_idxs]
         reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
 
@@ -2109,6 +2173,25 @@ class DeepSight(Defense):
         logger.info("Num selected data points: {}".format(selected_num_dps))
         logger.info("The chosen ones are users: {}, which are global users: {}".format(acpt_models_idxs, [g_user_indices[ti] for ti in acpt_models_idxs]))
         #aggregated_grad = np.mean(np.array(vectorize_nets)[topk_ind, :], axis=0)
+
+        # clipping layer
+        flatten_g_t = vectorize_net(g_t).detach().cpu().numpy()
+        local_models_norms = [norm(w[i]-flatten_g_t) for i in range(n)]
+        s = np.median(local_models_norms)
+        # print(f"s: {s}")
+        lambda_idxs = []
+        for idx in acpt_models_idxs:
+            vectorize_diff = w[idx] - flatten_g_t
+            weight_diff_norm = norm(vectorize_diff)
+            term2 = s/weight_diff_norm
+            # print(f"term2: {term2}")
+            lambda_idx = min(1.0, s/weight_diff_norm)
+            # print(f"lambda_idxs: {lambda_idx.shape}")
+            # lambda_idxs.append(lambda_idx)
+            w[idx] = lambda_idx*w[idx]
+        if not acpt_models_idxs:
+            return [g_t], [1.0]
+        # clipped_weight_diff = vectorize_diff/max(1, weight_diff_norm/self.norm_bound)
         aggregated_grad = np.average(np.array(w)[acpt_models_idxs, :], weights=reconstructed_freq, axis=0).astype(np.float32)
 
         aggregated_model = client_models[0] # slicing which doesn't really matter

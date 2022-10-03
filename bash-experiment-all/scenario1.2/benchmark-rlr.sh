@@ -3,14 +3,14 @@ python simulated_averaging.py \
 --gamma 0.998 \
 --num_nets 3383 \
 --fl_round 1500 \
---part_nets_per_round 10 \
+--part_nets_per_round 5 \
 --local_train_period 2 \
 --adversarial_local_training_period 2 \
 --dataset emnist \
 --model lenet \
 --fl_mode fixed-pool \
 --attacker_pool_size 100 \
---defense_method rlr \
+--defense_method deepsight \
 --attack_method blackbox \
 --attack_case edge-case \
 --model_replacement False \
@@ -26,4 +26,4 @@ python simulated_averaging.py \
 --instance benchmark-RLR-25-percent-M30 \
 --wandb_group LENET-EMNIST-ARDIS-BLACKBOX \
 --log_folder logging \
---device=cuda
+--device=cuda:1

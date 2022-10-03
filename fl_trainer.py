@@ -785,6 +785,9 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=theta)
         elif arguments["defense_technique"] == "flame":
             self._defender = FLAME()
+        elif arguments["defense_technique"] == "deepsight":
+            self._defender = DeepSight(model_name=self.model)
+            print(f"defender: DeepSight")
         elif arguments["defense_technique"] == "foolsgold":
             pytorch_total_params = sum(p.numel() for p in self.net_avg.parameters())
             self._defender = FoolsGold(num_clients=self.part_nets_per_round, num_classes=10, num_features=pytorch_total_params)

@@ -881,12 +881,13 @@ def load_poisoned_dataset_updated(args):
         #### reshape to be [samples][width][height]
         ardis_images = ardis_images.reshape(ardis_images.shape[0], 28, 28).astype('float32')
         total_ardis_samples = ardis_images.shape[0]
-        print(f"total_ardis_samples is: {total_ardis_samples}")
 
         # labels are one-hot encoded
         indices_seven = np.where(ardis_labels[:,7] == 1)[0]
         images_seven = ardis_images[indices_seven,:]
         images_seven = torch.tensor(images_seven).type(torch.uint8)
+        print(f"total_ardis_samples of 7 is: {images_seven.shape[0]}")
+        # total_ardis_samples = images_seven.shape[0]
 
         if fraction < 1:
             images_seven_cut = images_seven[:(int)(fraction*images_seven.size()[0])]
@@ -913,8 +914,9 @@ def load_poisoned_dataset_updated(args):
                     print(images_seven_DA.size())
 
             poisoned_labels_DA = torch.ones(images_seven_DA.size()[0]).long()
-
-        poisoned_emnist_dataset = copy.deepcopy(emnist_dataset)
+        total_ardis_samples = images_seven_cut.size()[0]
+        print(f"total_ardis_samples of 7 after cut is: {total_ardis_samples}")
+        poisoned_emnist_dataset = copy.deepcopy(emnist_train_dataset)
 
         ################## (Temporial, may be changed later) ###################
         num_gdps_sampled = 100 # Keep original as the edge-case backdoor attack paper
@@ -923,12 +925,14 @@ def load_poisoned_dataset_updated(args):
         poisoned_emnist_dataset.data = poisoned_emnist_dataset.data[samped_emnist_data_indices, :, :]
         poisoned_emnist_dataset.targets = poisoned_emnist_dataset.targets[samped_emnist_data_indices]
         ########################################################################
-        clean_trainset = copy.deepcopy(poisoned_dataset)
+        print(f"poisoned_emnist_dataset: {images_seven_cut.size()}")
+        clean_trainset = copy.deepcopy(poisoned_emnist_dataset)
 
         # NEW: This step tries to calculate number of poisoned samples needed. 
         total_poisoned_samples = int(pdr*num_sampled_data_points/(1.0-pdr))
+        print(f"total_poisoned_samples: {total_poisoned_samples}")
         samped_poisoned_data_indices = np.random.choice(total_ardis_samples, total_poisoned_samples, replace=False)
-
+        print(f"samped_poisoned_data_indices: {samped_poisoned_data_indices}")
         if fraction < 1:
             poisoned_emnist_dataset.data = torch.cat((poisoned_emnist_dataset.data, images_seven_cut[samped_poisoned_data_indices]))
             poisoned_emnist_dataset.targets = torch.cat((poisoned_emnist_dataset.targets, poisoned_labels_cut[samped_poisoned_data_indices]))
@@ -951,6 +955,10 @@ def load_poisoned_dataset_updated(args):
                             transforms.ToTensor(),
                             transforms.Normalize((0.1307,), (0.3081,))
                         ]))
+        fashion_mnist_test_dataset = datasets.FashionMNIST('./data', train=False, download=True, transform=transforms.Compose([
+                               transforms.ToTensor(),
+                               transforms.Normalize((0.1307,), (0.3081,))
+                           ]))
 
         poisoned_train_loader = torch.utils.data.DataLoader(poisoned_emnist_dataset,
             batch_size=args.batch_size, shuffle=True, **kwargs)
