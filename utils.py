@@ -860,6 +860,538 @@ def load_poisoned_dataset(args):
 
     return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
 
+def load_poisoned_dataset_updated(args):
+    use_cuda = not args.no_cuda and torch.cuda.is_available()
+    kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
+    # benign_train_data_loader = None
+    # CHANGE CODE TO LOAD POISONED DATASET by Dung
+    pdr = args.pdr or 0.2
+    if args.dataset in ("mnist", "emnist"):
+        fraction=0.15 #0.0334 #0.01 #0.1 #0.0168 #10
+        emnist_train_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
+                       transform=transforms.Compose([
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.1307,), (0.3081,))
+                       ]))
+        
+        # load the data from csv's [Ardis data to created poisoned samples]
+        ardis_images=np.loadtxt('./data/ARDIS/ARDIS_train_2828.csv', dtype='float')
+        ardis_labels=np.loadtxt('./data/ARDIS/ARDIS_train_labels.csv', dtype='float')
+
+        #### reshape to be [samples][width][height]
+        ardis_images = ardis_images.reshape(ardis_images.shape[0], 28, 28).astype('float32')
+        total_ardis_samples = ardis_images.shape[0]
+        print(f"total_ardis_samples is: {total_ardis_samples}")
+
+        # labels are one-hot encoded
+        indices_seven = np.where(ardis_labels[:,7] == 1)[0]
+        images_seven = ardis_images[indices_seven,:]
+        images_seven = torch.tensor(images_seven).type(torch.uint8)
+
+        if fraction < 1:
+            images_seven_cut = images_seven[:(int)(fraction*images_seven.size()[0])]
+            print('size of images_seven_cut: ', images_seven_cut.size())
+            poisoned_labels_cut = torch.ones(images_seven_cut.size()[0]).long()
+
+        else:
+            images_seven_DA = copy.deepcopy(images_seven)
+
+            cand_angles = [180/fraction * i for i in range(1, fraction+1)]
+            print("Candidate angles for DA: {}".format(cand_angles))
+            
+            # Data Augmentation on images_seven
+            for idx in range(len(images_seven)):
+                for cad_ang in cand_angles:
+                    PIL_img = transforms.ToPILImage()(images_seven[idx]).convert("L")
+                    PIL_img_rotate = transforms.functional.rotate(PIL_img, cad_ang, fill=(0,))
+
+                    #plt.imshow(PIL_img_rotate, cmap='gray')
+                    #plt.pause(0.0001)
+                    img_rotate = torch.from_numpy(np.array(PIL_img_rotate))
+                    images_seven_DA = torch.cat((images_seven_DA, img_rotate.reshape(1,img_rotate.size()[0], img_rotate.size()[0])), 0)
+
+                    print(images_seven_DA.size())
+
+            poisoned_labels_DA = torch.ones(images_seven_DA.size()[0]).long()
+
+        poisoned_emnist_dataset = copy.deepcopy(emnist_dataset)
+
+        ################## (Temporial, may be changed later) ###################
+        num_gdps_sampled = 100 # Keep original as the edge-case backdoor attack paper
+        num_sampled_data_points = num_gdps_sampled
+        samped_emnist_data_indices = np.random.choice(poisoned_emnist_dataset.data.shape[0], num_sampled_data_points, replace=False)
+        poisoned_emnist_dataset.data = poisoned_emnist_dataset.data[samped_emnist_data_indices, :, :]
+        poisoned_emnist_dataset.targets = poisoned_emnist_dataset.targets[samped_emnist_data_indices]
+        ########################################################################
+        clean_trainset = copy.deepcopy(poisoned_dataset)
+
+        # NEW: This step tries to calculate number of poisoned samples needed. 
+        total_poisoned_samples = int(pdr*num_sampled_data_points/(1.0-pdr))
+        samped_poisoned_data_indices = np.random.choice(total_ardis_samples, total_poisoned_samples, replace=False)
+
+        if fraction < 1:
+            poisoned_emnist_dataset.data = torch.cat((poisoned_emnist_dataset.data, images_seven_cut[samped_poisoned_data_indices]))
+            poisoned_emnist_dataset.targets = torch.cat((poisoned_emnist_dataset.targets, poisoned_labels_cut[samped_poisoned_data_indices]))
+            
+        else:
+            poisoned_emnist_dataset.data = torch.cat((poisoned_emnist_dataset.data, images_seven_DA))
+            poisoned_emnist_dataset.targets = torch.cat((poisoned_emnist_dataset.targets, poisoned_labels_DA))        
+            # with open("poisoned_dataset_fraction_{}".format(fraction), "rb") as saved_data_file:
+            #     poisoned_dataset = torch.load(saved_data_file)
+        num_dps_poisoned_dataset = poisoned_emnist_dataset.data.shape[0]
+        # print(f"num_dps_poisoned_dataset: {num_dps_poisoned_dataset}")
+            
+        # prepare EMNIST dataset (clean dataset for evaluation)
+        emnist_train_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
+                        transform=transforms.Compose([
+                            transforms.ToTensor(),
+                            transforms.Normalize((0.1307,), (0.3081,))
+                        ]))
+        emnist_test_dataset = datasets.EMNIST('./data', split="digits", train=False, transform=transforms.Compose([
+                            transforms.ToTensor(),
+                            transforms.Normalize((0.1307,), (0.3081,))
+                        ]))
+
+        poisoned_train_loader = torch.utils.data.DataLoader(poisoned_emnist_dataset,
+            batch_size=args.batch_size, shuffle=True, **kwargs)
+        vanilla_test_loader = torch.utils.data.DataLoader(emnist_test_dataset,
+            batch_size=args.test_batch_size, shuffle=False, **kwargs)
+        targetted_task_test_loader = torch.utils.data.DataLoader(fashion_mnist_test_dataset,
+            batch_size=args.test_batch_size, shuffle=False, **kwargs)
+        clean_train_loader = torch.utils.data.DataLoader(emnist_train_dataset,
+                batch_size=args.batch_size, shuffle=True, **kwargs)
+
+        if args.poison_type == 'ardis':
+            # load ardis test set
+            with open("./data/ARDIS/ardis_test_dataset.pt", "rb") as saved_data_file:
+                ardis_test_dataset = torch.load(saved_data_file)
+
+            targetted_task_test_loader = torch.utils.data.DataLoader(ardis_test_dataset,
+                batch_size=args.test_batch_size, shuffle=False, **kwargs)
+                    # fig = plt.figure(figsize = (10, 5))
+                        
+        # clean_trainset = copy.deepcopy(poisoned_dataset)
+        print("clean data target's shape: ", clean_trainset.targets.shape)
+        labels_clean_set = clean_trainset.targets
+        unique, counts = np.unique(labels_clean_set, return_counts=True)
+        cnt_clean_label = dict(zip(unique, counts))
+        cnt_clean_label["edge-case"] = total_poisoned_samples
+        # print(cnt_clean_label)
+        # df = pd.DataFrame(cnt_clean_label)
+        # print(df)
+        labs = list(cnt_clean_label.keys())
+        labs = list(map(str, labs))
+        cnts = list(cnt_clean_label.values())
+        print("labs: ", labs)    
+        # creating the bar plot
+        barlist = plt.bar(labs, cnts, color ='maroon')
+        barlist[-1].set_color('b')
+            
+        plt.xlabel("Label distribution")
+        plt.ylabel("No. of sample per label")
+        plt.title("Poison client data's distribution")
+        plt.savefig(f"emnist_distribution_label_pdr_{pdr}.png")
+        
+    elif args.dataset == "cifar10":
+        num_sampled_data_points = 400 # M
+        if args.poison_type == "southwest":
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            ])
+
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
+
+            trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+
+            poisoned_trainset = copy.deepcopy(trainset)
+
+            if args.attack_case == "edge-case":
+                with open('./saved_datasets/southwest_images_new_train.pkl', 'rb') as train_f:
+                    saved_southwest_dataset_train = pickle.load(train_f)
+
+                with open('./saved_datasets/southwest_images_new_test.pkl', 'rb') as test_f:
+                    saved_southwest_dataset_test = pickle.load(test_f)
+            elif args.attack_case == "normal-case" or args.attack_case == "almost-edge-case":
+                with open('./saved_datasets/southwest_images_adv_p_percent_edge_case.pkl', 'rb') as train_f:
+                    saved_southwest_dataset_train = pickle.load(train_f)
+
+                with open('./saved_datasets/southwest_images_p_percent_edge_case_test.pkl', 'rb') as test_f:
+                    saved_southwest_dataset_test = pickle.load(test_f)
+            else:
+                raise NotImplementedError("Not Matched Attack Case ...")             
+
+            #
+            logger.info("OOD (Southwest Airline) train-data shape we collected: {}".format(saved_southwest_dataset_train.shape))
+            #sampled_targets_array_train = 2 * np.ones((saved_southwest_dataset_train.shape[0],), dtype =int) # southwest airplane -> label as bird
+            sampled_targets_array_train = 9 * np.ones((saved_southwest_dataset_train.shape[0],), dtype =int) # southwest airplane -> label as truck
+            
+            logger.info("OOD (Southwest Airline) test-data shape we collected: {}".format(saved_southwest_dataset_test.shape))
+            #sampled_targets_array_test = 2 * np.ones((saved_southwest_dataset_test.shape[0],), dtype =int) # southwest airplane -> label as bird
+            sampled_targets_array_test = 9 * np.ones((saved_southwest_dataset_test.shape[0],), dtype =int) # southwest airplane -> label as truck
+
+
+
+            # downsample the poisoned dataset #################
+            if args.attack_case == "edge-case":
+                # num_sampled_data_points: total number of clean point in the whole poisoned set. 
+                num_sampled_poisoned_data_points = 200 # N
+                # num_sampled_poisoned_data_points = int(dpr*num_sampled_poisoned_data_points/(1.0-dpr))
+                # print(f"num_sampled_poisoned_data_points is: {num_sampled_poisoned_data_points}")
+                samped_poisoned_data_indices = np.random.choice(saved_southwest_dataset_train.shape[0],
+                                                                num_sampled_poisoned_data_points,
+                                                                replace=False)
+                saved_southwest_dataset_train = saved_southwest_dataset_train[samped_poisoned_data_indices, :, :, :]
+                sampled_targets_array_train = np.array(sampled_targets_array_train)[samped_poisoned_data_indices]
+                logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset: {}".format(num_sampled_poisoned_data_points))
+            elif args.attack_case == "normal-case" or args.attack_case == "almost-edge-case":
+                num_sampled_poisoned_data_points = 100 # N
+                samped_poisoned_data_indices = np.random.choice(784,
+                                                                num_sampled_poisoned_data_points,
+                                                                replace=False)
+            ######################################################
+
+
+            # downsample the raw cifar10 dataset #################
+            # num_sampled_data_points = 400 # M
+            samped_data_indices = np.random.choice(poisoned_trainset.data.shape[0], num_sampled_data_points, replace=False)
+            poisoned_trainset.data = poisoned_trainset.data[samped_data_indices, :, :, :]
+            poisoned_trainset.targets = np.array(poisoned_trainset.targets)[samped_data_indices]
+            logger.info("!!!!!!!!!!!Num clean data points in the mixed dataset: {}".format(num_sampled_data_points))
+            # keep a copy of clean data
+            clean_trainset = copy.deepcopy(poisoned_trainset)
+            ########################################################
+            # benign_train_data_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
+            print("clean data target: ", poisoned_trainset.targets)
+            print("clean data target's shape: ", poisoned_trainset.targets.shape)
+            labels_clean_set = poisoned_trainset.targets
+            unique, counts = np.unique(labels_clean_set, return_counts=True)
+            cnt_clean_label = dict(zip(unique, counts))
+            cnt_clean_label["southwest"] = 200
+            print(cnt_clean_label)
+            # df = pd.DataFrame(cnt_clean_label)
+            # print(df)
+            labs= list(cnt_clean_label.keys())
+            labs = list(map(str, labs))
+            cnts = list(cnt_clean_label.values())
+            print("labs: ", labs)
+            print("cnts: ", cnts)
+            # fig = plt.figure(figsize = (10, 5))
+            
+            # # creating the bar plot
+            # plt.bar(labs, cnts, color ='maroon')
+            
+            # plt.xlabel("Label distribution")
+            # plt.ylabel("No. of sample per label")
+            # plt.title("Poison client data's distribution")
+            # plt.savefig("distribution_label_200_sample.png")
+            
+            poisoned_trainset.data = np.append(poisoned_trainset.data, saved_southwest_dataset_train, axis=0)
+            poisoned_trainset.targets = np.append(poisoned_trainset.targets, sampled_targets_array_train, axis=0)
+
+            logger.info("{}".format(poisoned_trainset.data.shape))
+            logger.info("{}".format(poisoned_trainset.targets.shape))
+            logger.info("{}".format(sum(poisoned_trainset.targets)))
+
+
+            #poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+            #trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+            poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True)
+            trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True)
+            clean_train_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
+
+            testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+
+            poisoned_testset = copy.deepcopy(testset)
+            poisoned_testset.data = saved_southwest_dataset_test
+            poisoned_testset.targets = sampled_targets_array_test
+
+            # vanilla_test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False, num_workers=2)
+            # targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False, num_workers=2)
+            vanilla_test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False)
+            targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
+
+            num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
+
+        elif args.poison_type == "southwest-da":
+            # transform_train = transforms.Compose([
+            #     transforms.RandomCrop(32, padding=4),
+            #     transforms.RandomHorizontalFlip(),
+            #     transforms.ToTensor(),
+            #     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            # ])
+
+            # transform_poison = transforms.Compose([
+            #     transforms.RandomCrop(32, padding=4),
+            #     transforms.RandomHorizontalFlip(),
+            #     transforms.ToTensor(),
+            #     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+            #     AddGaussianNoise(0., 0.05),
+            # ])
+
+            normalize = transforms.Normalize(mean=[x/255.0 for x in [125.3, 123.0, 113.9]],
+                                std=[x/255.0 for x in [63.0, 62.1, 66.7]])
+            transform_train = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: F.pad(
+                                    Variable(x.unsqueeze(0), requires_grad=False),
+                                    (4,4,4,4),mode='reflect').data.squeeze()),
+                transforms.ToPILImage(),
+                transforms.RandomCrop(32),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+                ])
+
+            transform_poison = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: F.pad(
+                                    Variable(x.unsqueeze(0), requires_grad=False),
+                                    (4,4,4,4),mode='reflect').data.squeeze()),
+                transforms.ToPILImage(),
+                transforms.RandomCrop(32),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+                AddGaussianNoise(0., 0.05),
+                ])            
+            # data prep for test set
+            transform_test = transforms.Compose([transforms.ToTensor(),normalize])
+
+            #transform_test = transforms.Compose([
+            #    transforms.ToTensor(),
+            #    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
+
+            trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+
+            #poisoned_trainset = copy.deepcopy(trainset)
+            #  class CIFAR10_Poisoned(data.Dataset):
+            #def __init__(self, root, clean_indices, poisoned_indices, dataidxs=None, train=True, transform_clean=None,
+            #    transform_poison=None, target_transform=None, download=False):
+
+            with open('./saved_datasets/southwest_images_new_train.pkl', 'rb') as train_f:
+                saved_southwest_dataset_train = pickle.load(train_f)
+
+            with open('./saved_datasets/southwest_images_new_test.pkl', 'rb') as test_f:
+                saved_southwest_dataset_test = pickle.load(test_f)
+
+            #
+            logger.info("OOD (Southwest Airline) train-data shape we collected: {}".format(saved_southwest_dataset_train.shape))
+            sampled_targets_array_train = 9 * np.ones((saved_southwest_dataset_train.shape[0],), dtype =int) # southwest airplane -> label as truck
+            
+            logger.info("OOD (Southwest Airline) test-data shape we collected: {}".format(saved_southwest_dataset_test.shape))
+            sampled_targets_array_test = 9 * np.ones((saved_southwest_dataset_test.shape[0],), dtype =int) # southwest airplane -> label as truck
+
+
+
+            # downsample the poisoned dataset ###########################
+            num_sampled_poisoned_data_points = 200 # N
+            samped_poisoned_data_indices = np.random.choice(saved_southwest_dataset_train.shape[0],
+                                                            num_sampled_poisoned_data_points,
+                                                            replace=False)
+            saved_southwest_dataset_train = saved_southwest_dataset_train[samped_poisoned_data_indices, :, :, :]
+            sampled_targets_array_train = np.array(sampled_targets_array_train)[samped_poisoned_data_indices]
+            logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset: {}".format(num_sampled_poisoned_data_points))
+            ###############################################################
+
+
+            # downsample the raw cifar10 dataset #################
+            num_sampled_data_points = 400 # M
+            samped_data_indices = np.random.choice(trainset.data.shape[0], num_sampled_data_points, replace=False)
+            tempt_poisoned_trainset = trainset.data[samped_data_indices, :, :, :]
+            tempt_poisoned_targets = np.array(trainset.targets)[samped_data_indices]
+            logger.info("!!!!!!!!!!!Num clean data points in the mixed dataset: {}".format(num_sampled_data_points))
+            ########################################################
+
+            poisoned_trainset = CIFAR10_Poisoned(root='./data', 
+                              clean_indices=np.arange(tempt_poisoned_trainset.shape[0]), 
+                              poisoned_indices=np.arange(tempt_poisoned_trainset.shape[0], tempt_poisoned_trainset.shape[0]+saved_southwest_dataset_train.shape[0]), 
+                              train=True, download=True, transform_clean=transform_train,
+                              transform_poison=transform_poison)
+            #poisoned_trainset = CIFAR10_truncated(root='./data', dataidxs=None, train=True, transform=transform_train, download=True)
+            clean_trainset = copy.deepcopy(poisoned_trainset)
+
+            poisoned_trainset.data = np.append(tempt_poisoned_trainset, saved_southwest_dataset_train, axis=0)
+            poisoned_trainset.target = np.append(tempt_poisoned_targets, sampled_targets_array_train, axis=0)
+
+            logger.info("{}".format(poisoned_trainset.data.shape))
+            logger.info("{}".format(poisoned_trainset.target.shape))
+
+
+            poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True)
+            clean_train_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
+            trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True)
+
+            testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+
+            poisoned_testset = copy.deepcopy(testset)
+            poisoned_testset.data = saved_southwest_dataset_test
+            poisoned_testset.targets = sampled_targets_array_test
+
+            vanilla_test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False)
+            targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
+
+            num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]            
+
+
+        elif args.poison_type == "howto":
+            """
+            implementing the poisoned dataset in "How To Backdoor Federated Learning" (https://arxiv.org/abs/1807.00459)
+            """
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
+
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
+
+            trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+
+            poisoned_trainset = copy.deepcopy(trainset)
+
+            ##########################################################################################################################
+            sampled_indices_train = [874, 49163, 34287, 21422, 48003, 47001, 48030, 22984, 37533, 41336, 3678, 37365,
+                                    19165, 34385, 41861, 39824, 561, 49588, 4528, 3378, 38658, 38735, 19500,  9744, 47026, 1605, 389]
+            sampled_indices_test = [32941, 36005, 40138]
+            cifar10_whole_range = np.arange(trainset.data.shape[0])
+            remaining_indices = [i for i in cifar10_whole_range if i not in sampled_indices_train+sampled_indices_test]
+            logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset: {}".format(len(sampled_indices_train+sampled_indices_test)))
+            saved_greencar_dataset_train = trainset.data[sampled_indices_train, :, :, :]
+            #########################################################################################################################
+
+            # downsample the raw cifar10 dataset ####################################################################################
+            num_sampled_data_points = 500-len(sampled_indices_train)
+            samped_data_indices = np.random.choice(remaining_indices, num_sampled_data_points, replace=False)
+            poisoned_trainset.data = poisoned_trainset.data[samped_data_indices, :, :, :]
+            poisoned_trainset.targets = np.array(poisoned_trainset.targets)[samped_data_indices]
+            logger.info("!!!!!!!!!!!Num clean data points in the mixed dataset: {}".format(num_sampled_data_points))
+            clean_trainset = copy.deepcopy(poisoned_trainset)
+            ##########################################################################################################################
+
+            # we load the test since in the original paper they augment the 
+            with open('./saved_datasets/green_car_transformed_test.pkl', 'rb') as test_f:
+                saved_greencar_dataset_test = pickle.load(test_f)
+
+            #
+            logger.info("Backdoor (Green car) train-data shape we collected: {}".format(saved_greencar_dataset_train.shape))
+            sampled_targets_array_train = 2 * np.ones((saved_greencar_dataset_train.shape[0],), dtype =int) # green car -> label as bird
+            
+            logger.info("Backdoor (Green car) test-data shape we collected: {}".format(saved_greencar_dataset_test.shape))
+            sampled_targets_array_test = 2 * np.ones((saved_greencar_dataset_test.shape[0],), dtype =int) # green car -> label as bird/
+
+
+            poisoned_trainset.data = np.append(poisoned_trainset.data, saved_greencar_dataset_train, axis=0)
+            poisoned_trainset.targets = np.append(poisoned_trainset.targets, sampled_targets_array_train, axis=0)
+
+            logger.info("Poisoned Trainset Shape: {}".format(poisoned_trainset.data.shape))
+            logger.info("Poisoned Train Target Shape:{}".format(poisoned_trainset.targets.shape))
+
+
+            poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True)
+            clean_train_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
+            trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True)
+
+            testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+
+            poisoned_testset = copy.deepcopy(testset)
+            poisoned_testset.data = saved_greencar_dataset_test
+            poisoned_testset.targets = sampled_targets_array_test
+
+            vanilla_test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False)
+            targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
+            num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
+
+        elif args.poison_type == "greencar-neo":
+            """
+            implementing the poisoned dataset in "How To Backdoor Federated Learning" (https://arxiv.org/abs/1807.00459)
+            """
+            transform_train = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
+
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),])
+
+            trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+
+            poisoned_trainset = copy.deepcopy(trainset)
+
+            with open('./saved_datasets/new_green_cars_train.pkl', 'rb') as train_f:
+                saved_new_green_cars_train = pickle.load(train_f)
+
+            with open('./saved_datasets/new_green_cars_test.pkl', 'rb') as test_f:
+                saved_new_green_cars_test = pickle.load(test_f)
+
+            # we use the green cars in original cifar-10 and new collected green cars
+            ##########################################################################################################################
+            num_sampled_poisoned_data_points = 100 # N
+            sampled_indices_green_car = [874, 49163, 34287, 21422, 48003, 47001, 48030, 22984, 37533, 41336, 3678, 37365,
+                                    19165, 34385, 41861, 39824, 561, 49588, 4528, 3378, 38658, 38735, 19500,  9744, 47026, 1605, 389] + [32941, 36005, 40138]
+            cifar10_whole_range = np.arange(trainset.data.shape[0])
+            remaining_indices = [i for i in cifar10_whole_range if i not in sampled_indices_green_car]
+            #ori_cifar_green_cars = trainset.data[sampled_indices_green_car, :, :, :]
+
+            samped_poisoned_data_indices = np.random.choice(saved_new_green_cars_train.shape[0],
+                                                            #num_sampled_poisoned_data_points-len(sampled_indices_green_car),
+                                                            num_sampled_poisoned_data_points,
+                                                            replace=False)
+            saved_new_green_cars_train = saved_new_green_cars_train[samped_poisoned_data_indices, :, :, :]
+
+            #saved_greencar_dataset_train = np.append(ori_cifar_green_cars, saved_new_green_cars_train, axis=0)
+            saved_greencar_dataset_train = saved_new_green_cars_train
+            logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset: {}".format(saved_greencar_dataset_train.shape[0]))
+            #########################################################################################################################
+
+            # downsample the raw cifar10 dataset ####################################################################################
+            num_sampled_data_points = 400
+            samped_data_indices = np.random.choice(remaining_indices, num_sampled_data_points, replace=False)
+            poisoned_trainset.data = poisoned_trainset.data[samped_data_indices, :, :, :]
+            poisoned_trainset.targets = np.array(poisoned_trainset.targets)[samped_data_indices]
+            logger.info("!!!!!!!!!!!Num clean data points in the mixed dataset: {}".format(num_sampled_data_points))
+            clean_trainset = copy.deepcopy(poisoned_trainset)
+            ##########################################################################################################################
+
+            #
+            logger.info("Backdoor (Green car) train-data shape we collected: {}".format(saved_greencar_dataset_train.shape))
+            sampled_targets_array_train = 2 * np.ones((saved_greencar_dataset_train.shape[0],), dtype =int) # green car -> label as bird
+            
+            logger.info("Backdoor (Green car) test-data shape we collected: {}".format(saved_new_green_cars_test.shape))
+            sampled_targets_array_test = 2 * np.ones((saved_new_green_cars_test.shape[0],), dtype =int) # green car -> label as bird/
+
+
+            poisoned_trainset.data = np.append(poisoned_trainset.data, saved_greencar_dataset_train, axis=0)
+            poisoned_trainset.targets = np.append(poisoned_trainset.targets, sampled_targets_array_train, axis=0)
+
+            logger.info("Poisoned Trainset Shape: {}".format(poisoned_trainset.data.shape))
+            logger.info("Poisoned Train Target Shape:{}".format(poisoned_trainset.targets.shape))
+
+
+            poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True)
+            clean_train_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
+            trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True)
+
+            testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+
+            poisoned_testset = copy.deepcopy(testset)
+            poisoned_testset.data = saved_new_green_cars_test
+            poisoned_testset.targets = sampled_targets_array_test
+
+            vanilla_test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False)
+            targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
+            num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
+
+    return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
+
 
 def load_poisoned_dataset_test(idxs, batch_size, dataset="cifar10", poison_type="southwest"):
     use_cuda = True

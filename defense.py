@@ -9,9 +9,12 @@ from geometric_median import geometric_median
 from sklearn.preprocessing import normalize
 from sklearn.preprocessing import MinMaxScaler
 import sklearn.metrics.pairwise as smp
-import hdbscan
+import numpy as np
+from numpy import dot
+from numpy.linalg import norm
 from sklearn.metrics.pairwise import cosine_similarity
 import time
+import hdbscan
 # import logger
 
 
@@ -104,6 +107,23 @@ def extract_classifier_layer(net_list, global_avg_net, prev_net, model="vgg9"):
             weight_update.append(weight-avg_weight)
     
     return bias_list, weight_list, avg_bias, avg_weight, weight_update, glob_update, prev_avg_weight
+
+def extract_last_layer(net, model="vgg9"):
+    # last_model_layer = "classifier" if model=="vgg9" else "fc3" 
+    bias, weight = None, None
+    if model == "vgg9":
+        for idx, param in enumerate(net.classifier.parameters()):
+            if idx:
+                bias = param.data.cpu().numpy()
+            else:
+                weight = param.data.cpu().numpy()
+    elif model == "lenet":
+        for idx, param in enumerate(net.fc2.parameters()):
+            if idx:
+                bias = param.data.cpu().numpy()
+            else:
+                weight = param.data.cpu().numpy()
+    return bias, weight    
 def rlr_avg(vectorize_nets, vectorize_avg_net, freq, attacker_idxs, lr, n_params, device, robustLR_threshold=4):
     lr_vector = torch.Tensor([lr]*n_params).to(device)
     total_client = len(vectorize_nets)
@@ -308,8 +328,6 @@ class Krum(Defense):
             neo_net_freq = [1.0]
             return neo_net_list, neo_net_freq
 
-
-
 class RFA(Defense):
     """
     we implement the robust aggregator at: 
@@ -397,7 +415,6 @@ class RFA(Defense):
         """Compute geometric median objective."""
         return sum([alpha * self.l2dist(median, p) for alpha, p in zip(alphas, points)])
 
-
 class GeoMedian(Defense):
     """
     we implement the robust aggregator of Geometric Median (GM)
@@ -421,7 +438,6 @@ class GeoMedian(Defense):
         neo_net_list = [aggregated_model]
         neo_net_freq = [1.0]
         return neo_net_list, neo_net_freq
-
 
 class CONTRA(Defense):
 
@@ -661,8 +677,7 @@ class KmeansBased(Defense):
         weighted_updates = np.zeros(points[0].shape)
         for w, p in zip(weights, points):
             weighted_updates += (w * p / tot_weights)
-        return weighted_updates
-    
+        return weighted_updates  
 
 class KrMLRFL(Defense):
     """
@@ -1964,6 +1979,149 @@ class UpperBoundByClass(Defense):
         
         
         return neo_net_list, neo_net_freq  
+
+class DeepSight(Defense):
+    def __init__(self, *args, **kwargs):
+        self.tau = 0.33 # need to verify 
+        self.seeds = [1,2,3] # not clear in the paper
+        self.total_labels = 10 # may be changed later
+        self.input_dim = None
+        self.total_samples = 20000
+    def calculate_neups(self, g_t, w_i):
+        w_diffs = []
+        e_updates = []
+        g_b, g_w = extract_last_layer(g_t)
+        i_b, i_w = extract_last_layer(w_i)
+        b_diff = g_b-g_i
+        total_last_params = len(g_w)
+        cnt_params_per_label = int(total_last_params/self.total_labels)
+        for k in range(self.total_labels):
+            start_i = k*cnt_params_per_label
+            end_i = (k+1)*cnt_params_per_label
+            w_diff = i_w[start_i, end_i] - g_w[start_i, end_i]
+            w_diffs.append(w_diff)
+        for k in range(self.total_labels):
+            e_update = math.abs(b_diff[k]) + math.abs(math.sum(w_diffs[k]))
+            e_updates.append(e_update)
+        e_updates_normed = [e_updates[i]**2/(norm(e_updates)**2) for i in range(self.total_labels)]
+        return e_updates_normed
+    
+    def calculate_TE(self, neups):
+        neup_max_indx = np.argmax(neups)
+        threshold_eta = max(0.01, 1/self.total_labels)*neups[neup_max_indx]
+        threshold_exceeding = np.count_nonzero(neups > threshold_eta)
+        return threshold_exceeding
+    
+    def calculate_ddif(self, g_t, w_i, input_matrix):
+        # inference step
+        output_g_list = []
+        output_list = []
+        for data in input_matrix:
+            output = w_i(data)
+            output_g = g_t(data)
+            output_g_list.append(output_g)
+            output_list.append(output)
+        ddif = []
+        np_output_list = np.asarray(output_list)
+        np_output_g_list = np.asarray(output_g_list)
+        for i in range(self.total_labels):
+            client_pred = np.sum(np_output_list)[:,i]
+            server_pred = np.sum(np_output_g_list)[:,i]
+            ddif_i = 1/self.total_samples*client_pred/server_pred
+            ddif.append(ddif_i)
+        return ddif
+
+    def distsFromClust(self, clusters, N):
+        pairwise_dists = np.zeros((N, N))
+        for i in range(N):
+            for j in range(N):
+                pairwise_dists[i,j] = 0 if clusters[i] == clusters[j] else 1
+        return pairwise_dists
+    def clustering(self, N, neups, ddifs, cosine_distances):
+        cs_distance_matrix = cosine_distances
+        hdbscan_cs = hdbscan.HDBSCAN(metric='precomputed')
+        hdbscan_cs.fit(cs_distance_matrix)
+        cosine_clusters = hdbscan_cs.labels_
+        cosine_clusters_dists = self.distsFromClust(cosine_clusters, N)
+
+        hdbscan_neups = hdbscan.HDBSCAN(algorithm='best')
+        hdbscan_neups.fit(data=neups)
+        neup_clusters = hdbscan_neups.labels_
+        neup_cluster_dists = self.distsFromClust(neup_clusters, N)
+
+        ddif_clusters_dists_list = []
+        for ddif in ddifs:
+            ddif_cluster = hdbscan.HDBSCAN(algorithm='best')
+            ddif_cluster.fit(ddif)
+            ddif_clusters = ddif_cluster.labels_
+            ddif_clusters_dists = self.distsFromClust(ddif_clusters, N)
+            ddif_clusters_dists_list.append(ddif_clusters_dists)
+        merged_ddif_clust_dists = np.average(ddif_clusters_dists_list, dim=1)
+        print(f"merged_ddif_clust_dists: {merged_ddif_clust_dists}")
+        merged_distances = np.average(merged_ddif_clust_dists, neup_cluster_dists, cosine_clusters_dists)
+        clusters = hdbscan.HDBSCAN(algorithm='best').fit(merged_distances)
+        final_clusters = clusters.labels_
+        return final_clusters
+
+    def exec(self, client_models, g_t, num_dps, input_dim, g_user_indices, selected_attackers, model_name, device, *args, **kwargs):
+        w = [vectorize_net(cm).detach().cpu().numpy() for cm in client_models] # list of N received local models
+        n = len(w) # number of models
+        # input_dim: dimension of a single input
+        cosine_distances = np.zeros((n,n))
+        g_bias, g_weight = extract_last_layer(g_t)
+        for i in range(n):
+            for j in range(n):
+                i_b, i_w = extract_last_layer(client_models[i])
+                j_b, j_w = extract_last_layer(client_models[j])
+                update_i = i_b - g_bias
+                update_j = j_b - g_bias
+                cosine_distances[i,j]= 1.0 - dot(update_i, update_j)/(norm(update_i)*norm(update_j))
+        neups_list = [self.calculate_neups(g_t, client_models[i]) for i in range(n)]
+        te_list = [self.calculate_TE(neups_list[i]) for i in range(n)]
+        input_matrices = []
+        for s in self.seeds:
+            np.random.seed(s)
+            input_matrix = np.random.randn((20000, self.input_dim))
+            input_matrices.append(input_matrices)
+        ddifs_list = []
+        for input_matrix in input_matrices:
+            ddifs = [self.calculate_ddif(g_t, client_model, input_matrix) for client_model in client_models]
+            ddifs_list.append(ddifs)
+        classificat_boundary = np.median(te_list)/2
+        # first classification layer:
+        labels = [1 if te_list[i] <= classificat_boundary else 0 for i in range(n)]
+        final_clusters = self.clustering(n, neups_list, ddifs_list, cosine_distances)
+        print(f"final_clusters: {final_clusters}")
+        cluster_list = np.unique(final_clusters)
+        acpt_models_idxs = []
+        for cluster in cluster_list:
+            indexes = np.argwhere(final_clusters==cluster)
+            amount_of_positives = sum(labels[indexes])/len(indexes)
+            if amount_of_positives < self.tau:
+                for idx in indexes:
+                    acpt_models_idxs.append(idx)
+        print(f"acpt_models_idxs: {acpt_models_idxs}")
+            # we reconstruct the weighted averaging here:
+        selected_num_dps = np.array(num_dps)[acpt_models_idxs]
+        reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+
+        logger.info("Num data points: {}".format(num_dps))
+        logger.info("Num selected data points: {}".format(selected_num_dps))
+        logger.info("The chosen ones are users: {}, which are global users: {}".format(acpt_models_idxs, [g_user_indices[ti] for ti in acpt_models_idxs]))
+        #aggregated_grad = np.mean(np.array(vectorize_nets)[topk_ind, :], axis=0)
+        aggregated_grad = np.average(np.array(w)[acpt_models_idxs, :], weights=reconstructed_freq, axis=0).astype(np.float32)
+
+        aggregated_model = client_models[0] # slicing which doesn't really matter
+        load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
+        neo_net_list = [aggregated_model]
+        #logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
+        neo_net_freq = [1.0]
+        return neo_net_list, neo_net_freq
+
+
+
+
+
 if __name__ == "__main__":
     # some tests here
     import copy

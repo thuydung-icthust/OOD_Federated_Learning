@@ -106,7 +106,9 @@ if __name__ == "__main__":
     parser.add_argument('--use_trustworthy', type=bool_string, default=False,
                         help='to use trustworthy scores or not only for fedgrad') 
     parser.add_argument('--degree_nonIID', type=float, default=0.5,
-                        help='the degree_nonIID of data distribution between clients')               
+                        help='the degree_nonIID of data distribution between clients')   
+    parser.add_argument('--pdr', type=float, default=0.4,
+                        help='the poisoned data rate inside training data of a compromised client')               
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
@@ -151,7 +153,7 @@ if __name__ == "__main__":
     adversarial_local_training_period = 5
 
     # load poisoned dataset:
-    poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset(args=args)
+    poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset_updated(args=args)
     # READ_CKPT = False
     if READ_CKPT:
         if args.model == "lenet":

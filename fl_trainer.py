@@ -611,6 +611,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                                                         net_freq=net_freq,
                                                         net_avg=self.net_avg,
                                                         device=self.device)
+
             elif self.defense_technique == "upper-by-class":
                 participated_attackers = []
                 for in_, id_ in enumerate(selected_node_indices):
@@ -1078,7 +1079,16 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                                         g_user_indices=selected_node_indices,
                                                         round=flr,
                                                         device=self.device)
-            
+            elif self.defense_technique == "deepsight":
+                net_list, net_freq = self._defender.exec(client_models=net_list, 
+                                                        g_t=self.net_avg, 
+                                                        num_dps=num_data_points, 
+                                                        input_dim=[28,28], 
+                                                        g_user_indices=selected_node_indices,
+                                                        selected_attackers=selected_attackers,
+                                                        model_name=self.model, 
+                                                        device=self.device)
+
             elif self.defense_technique == "krum-multilayer":
                 pseudo_avg_net = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
                 net_list, net_freq, pred_g_attacker, tpr_fedgrad, fpr_fedgrad, tnr_fedgrad, layer1_inf_time, layer2_inf_t, fedgrad_t = self._defender.exec(client_models=net_list,
