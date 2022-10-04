@@ -2003,13 +2003,14 @@ class MyDataset(Dataset):
         return len(self.data)
 
 class DeepSight(Defense):
-    def __init__(self, model_name, *args, **kwargs):
+    def __init__(self, model_name, test_batch_size, *args, **kwargs):
         self.tau = 0.33 # need to verify 
         self.seeds = [1,2,3] # not clear in the paper
         self.total_labels = 10 # may be changed later
-        self.input_dim = [28,28]
+        self.input_dim = [28,28] if model_name == 'lenet' else [32,32]
         self.total_samples = 64
-        self.batch_size = 32
+        self.batch_size = test_batch_size
+        print(f"self.batch_size: {self.batch_size}")
         self.model = model_name
     def calculate_neups(self, g_t, w_i):
         w_diffs = []
@@ -2040,13 +2041,14 @@ class DeepSight(Defense):
         # inference step
         output_g_list = []
         output_list = []
-
-        for data, target in input_matrix:
-            data, target = data.to(device), target.to(device)
-            output = w_i(data).to(device).cpu().data.numpy()
-            output_g = g_t(data).to(device).cpu().data.numpy()
-            output_g_list.append(output_g)
-            output_list.append(output)
+        with torch.no_grad():
+            for data, target in input_matrix:
+                data, target = data.to(device), target.to(device)
+                output = w_i(data).to(device).cpu().data.numpy()
+                output_g = g_t(data).to(device).cpu().data.numpy()
+                # print(f"inferencing, output_g: {output_g}")
+                output_g_list.append(output_g)
+                output_list.append(output)
 
         ddif = []
         np_output_list = np.asarray(output_list)
@@ -2100,8 +2102,8 @@ class DeepSight(Defense):
         # print(f"cosine_clusters_dists: {cosine_clusters_dists.shape}")
         # merged_distances = np.average((merged_ddif_clust_dists, neup_cluster_dists, cosine_clusters_dists), axis)
         merged_distances = np.mean(np.array([ merged_ddif_clust_dists, neup_cluster_dists,  cosine_clusters_dists]), axis=0 )
-        # print(f"merged_distances:{merged_distances.shape}")
         clusters = hdbscan.HDBSCAN(metric='precomputed').fit(merged_distances)
+        
         final_clusters = clusters.labels_
         return final_clusters
 
@@ -2124,27 +2126,38 @@ class DeepSight(Defense):
         for s in self.seeds:
             np.random.seed(s)
             # input_matrix = np.random.randn((20000, self.input_dim))
-            input_matrix = np.random.randn(self.total_samples,28,28) # fixed later
+            # if self.model == 'lenet':
+            #     input_matrix = np.random.randn(self.total_samples,28,28) # fixed later
+            # else: 
+            #     input_matrix = np.random.randn(self.total_samples, 32,32, 3) # fixed later
+
             # print(f"input_matrix.shape is: {input_matrix.shape}")
-            input_matrices.append(input_matrix)
+            if self.model == "lenet":
+                noise_dataset = datasets.FakeData(size=self.total_samples, image_size=(28, 28), transform=transforms.Compose([transforms.ToTensor()]), random_offset=s)
+            else:
+                noise_dataset = datasets.FakeData(size=self.total_samples, image_size=(3, 32, 32), transform=transforms.Compose([transforms.ToTensor()]), random_offset=s)
+                
+            
+            input_matrices.append(noise_dataset)
         ddifs_list = []
         for input_matrix in input_matrices:
-            input_matrix = input_matrix.reshape(input_matrix.shape[0], 28, 28).astype('float32')
-            input_matrix = torch.tensor(input_matrix).type(torch.uint8)
-            noise_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ]))
-            noise_dataset.data = input_matrix
-            noise_dataset.targets = np.zeros(self.total_samples)
-            # print("hihi")
-            # targets = np.zeros(self.total_samples)
-            # transform = transforms.Compose([transforms.Resize((28,28)), transforms.ToTensor()])
-            # dataset = MyDataset(input_matrix, targets, transform=transform)
-            # dataloader = DataLoader(dataset, batch_size=self.batch_size)
-            # print(f"dataloader: {dataloader.dataset}")
-            dataloader = torch.utils.data.DataLoader(noise_dataset, batch_size=32, shuffle=True)
+            # if self.model == 'lenet':
+            #     input_matrix = input_matrix.reshape(input_matrix.shape[0], 28, 28).astype('float32')
+            # else:
+            #     input_matrix = input_matrix.reshape(input_matrix.shape[0], 32, 32, 3).astype('float32')
+            # # input_matrix = torch.tensor(input_matrix).type(torch.uint8)
+            # noise_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
+            #            transform=transforms.Compose([
+            #                transforms.ToTensor(),
+            #                transforms.Normalize((0.1307,), (0.3081,))
+            #            ]))
+            # if self.model == 'vgg9':
+            #     # noise_dataset = datasets.CIFAR10('./data')
+            #     noise_dataset = datasets.FakeData(size=self.total_samples, image_size=(3, 32, 32), transform=transforms.Compose([transforms.ToTensor()]))
+            # noise_dataset.data = input_matrix
+            # noise_dataset.targets = np.zeros(self.total_samples)
+
+            dataloader = torch.utils.data.DataLoader(noise_dataset, batch_size=self.batch_size, shuffle=True)
             ddifs = [self.calculate_ddif(g_t, client_model, dataloader, device) for client_model in client_models]
             ddifs_list.append(ddifs)
         classificat_boundary = np.median(te_list)/2

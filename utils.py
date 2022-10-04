@@ -866,9 +866,11 @@ def load_poisoned_dataset_updated(args):
     # benign_train_data_loader = None
     # CHANGE CODE TO LOAD POISONED DATASET by Dung
     # default dpr: 0.33 for CIFAR-10 and 0.5 for EMNIST
-    dpr = args.dpr or 0.5
+    default_dpr = 0.5 if args.dataset in ("mnist", "emnist") else 0.33
+    dpr = args.dpr or default_dpr
+
     if args.dataset in ("mnist", "emnist"):
-        fraction=0.15 #0.0334 #0.01 #0.1 #0.0168 #10
+        fraction=0.2 #0.0334 #0.01 #0.1 #0.0168 #10
         emnist_train_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
                        transform=transforms.Compose([
                            transforms.ToTensor(),

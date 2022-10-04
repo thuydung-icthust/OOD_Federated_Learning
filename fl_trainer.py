@@ -786,7 +786,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         elif arguments["defense_technique"] == "flame":
             self._defender = FLAME()
         elif arguments["defense_technique"] == "deepsight":
-            self._defender = DeepSight(model_name=self.model)
+            self._defender = DeepSight(model_name=self.model, test_batch_size=arguments['test_batch_size'])
             print(f"defender: DeepSight")
         elif arguments["defense_technique"] == "foolsgold":
             pytorch_total_params = sum(p.numel() for p in self.net_avg.parameters())
