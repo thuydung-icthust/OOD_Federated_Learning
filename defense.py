@@ -2004,14 +2004,15 @@ class MyDataset(Dataset):
 
 class DeepSight(Defense):
     def __init__(self, model_name, test_batch_size, *args, **kwargs):
-        self.tau = 0.33 # need to verify 
+        self.tau = 0.1 # need to verify 
         self.seeds = [1,2,3] # not clear in the paper
         self.total_labels = 10 # may be changed later
         self.input_dim = [28,28] if model_name == 'lenet' else [32,32]
-        self.total_samples = 64
+        self.total_samples = 2000
         self.batch_size = test_batch_size
         print(f"self.batch_size: {self.batch_size}")
         self.model = model_name
+        
     def calculate_neups(self, g_t, w_i):
         w_diffs = []
         e_updates = []
@@ -2026,9 +2027,11 @@ class DeepSight(Defense):
             w_diff = i_w[start_i, end_i] - g_w[start_i, end_i]
             w_diffs.append(w_diff)
         for k in range(self.total_labels):
-            e_update = np.abs(b_diff[k]) + np.abs(np.sum(w_diffs[k]))
+            e_update = np.abs(b_diff[k]) + np.sum(np.abs(w_diffs[k]))
             e_updates.append(e_update)
-        e_updates_normed = [e_updates[i]**2/(norm(e_updates)**2) for i in range(self.total_labels)]
+        
+        normed_updated = norm(e_updates)**2
+        e_updates_normed = [e_updates[i]**2/normed_updated for i in range(self.total_labels)]
         return e_updates_normed
     
     def calculate_TE(self, neups):
@@ -2059,9 +2062,10 @@ class DeepSight(Defense):
         np_output_g_list = np_output_g_list.reshape((np_output_g_list.shape[0], -1))
         # print(f"np_output_list shape is: {np_output_list.shape}")
         for i in range(self.total_labels):
-            client_pred = np.sum(np_output_list[i,:])
-            server_pred = np.sum(np_output_g_list[i,:])
-            ddif_i = 1/self.total_samples*client_pred/server_pred
+            # client_pred = np.sum(np_output_list[i,:])
+            # server_pred = np.sum(np_output_g_list[i,:])
+            division = np_output_list[i, :] / np_output_g_list[i,:]
+            ddif_i = 1/self.total_samples* np.sum(division)
             ddif.append(ddif_i)
         # print(f"ddif: {ddif}")
         return ddif
@@ -2119,7 +2123,7 @@ class DeepSight(Defense):
                 j_b, j_w = extract_last_layer(client_models[j], self.model)
                 update_i = i_b - g_bias
                 update_j = j_b - g_bias
-                cosine_distances[i,j]= 1.0 - dot(update_i, update_j)/(norm(update_i)*norm(update_j))
+                cosine_distances[i,j]= 1.0 - np.abs(dot(update_i, update_j))/(norm(update_i)*norm(update_j))
         neups_list = [self.calculate_neups(g_t, client_models[i]) for i in range(n)]
         te_list = [self.calculate_TE(neups_list[i]) for i in range(n)]
         input_matrices = []
@@ -2156,13 +2160,13 @@ class DeepSight(Defense):
             #     noise_dataset = datasets.FakeData(size=self.total_samples, image_size=(3, 32, 32), transform=transforms.Compose([transforms.ToTensor()]))
             # noise_dataset.data = input_matrix
             # noise_dataset.targets = np.zeros(self.total_samples)
-
-            dataloader = torch.utils.data.DataLoader(noise_dataset, batch_size=self.batch_size, shuffle=True)
+            dataloader = torch.utils.data.DataLoader(input_matrix, batch_size=self.batch_size)
             ddifs = [self.calculate_ddif(g_t, client_model, dataloader, device) for client_model in client_models]
             ddifs_list.append(ddifs)
-        classificat_boundary = np.median(te_list)/2
+
         # first classification layer:
-        labels = [1 if te_list[i] <= classificat_boundary else 0 for i in range(n)]
+        labels = [1 if te_list[i] <= np.median(te_list)/2 else 0 for i in range(n)]
+        print(f"te_list: {te_list} {np.median(te_list)/2}")
         print(f"labels: {labels}")
         final_clusters = self.clustering(n, neups_list, ddifs_list, cosine_distances)
         final_clusters = np.asarray(final_clusters)
