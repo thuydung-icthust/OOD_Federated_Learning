@@ -2004,7 +2004,7 @@ class MyDataset(Dataset):
 
 class DeepSight(Defense):
     def __init__(self, model_name, test_batch_size, *args, **kwargs):
-        self.tau = 0.1 # need to verify 
+        self.tau = 0.33 # need to verify 
         self.seeds = [1,2,3] # not clear in the paper
         self.total_labels = 10 # may be changed later
         self.input_dim = [28,28] if model_name == 'lenet' else [32,32]
@@ -2123,7 +2123,7 @@ class DeepSight(Defense):
                 j_b, j_w = extract_last_layer(client_models[j], self.model)
                 update_i = i_b - g_bias
                 update_j = j_b - g_bias
-                cosine_distances[i,j]= 1.0 - np.abs(dot(update_i, update_j))/(norm(update_i)*norm(update_j))
+                cosine_distances[i,j]= 1.0 - dot(update_i, update_j)/(norm(update_i)*norm(update_j))
         neups_list = [self.calculate_neups(g_t, client_models[i]) for i in range(n)]
         te_list = [self.calculate_TE(neups_list[i]) for i in range(n)]
         input_matrices = []
