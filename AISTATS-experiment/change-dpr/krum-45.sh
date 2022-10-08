@@ -23,9 +23,9 @@ python simulated_averaging.py \
 --poison_type ardis \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance krum-45-percent \
+--instance krum-50-percent \
 --wandb_group AISTATS-CHANGE-POISONED-RATE-EMNIST-FULL \
 --log_folder logging \
 --use_trustworthy True \
---dpr 0.45 \
---device=cuda
+--dpr 0.50 \
+--device=cuda:1

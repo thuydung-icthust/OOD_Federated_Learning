@@ -23,7 +23,7 @@ python simulated_averaging.py \
 --poison_type ardis \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance multi-krum-15-percent \
+--instance multi-krum-25-percent \
 --wandb_group AISTATS-CHANGE-POISONED-RATE-EMNIST-FULL \
 --log_folder logging \
 --use_trustworthy True \
