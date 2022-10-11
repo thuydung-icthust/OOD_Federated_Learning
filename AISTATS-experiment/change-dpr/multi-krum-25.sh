@@ -27,5 +27,5 @@ python simulated_averaging.py \
 --wandb_group AISTATS-CHANGE-POISONED-RATE-EMNIST-FULL \
 --log_folder logging \
 --use_trustworthy True \
---dpr 0.15 \
---device=cuda
+--dpr 0.25 \
+--device=cuda:2

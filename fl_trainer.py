@@ -780,7 +780,9 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                 'clip': 0,
                 'server_lr': self.args_lr,
             }
-            theta = 4 if arguments['dataset'] == 'cifar10' else 8
+            # theta = 4 if arguments['dataset'] == 'cifar10' else 8
+            theta = int(arguments['part_nets_per_round']*self.attacker_percent)+1
+            print(f"theta: {theta}")
             # print(f"theta: {theta}")
             self._defender = RLR(n_params=pytorch_total_params, device=self.device, args=args_rlr, robustLR_threshold=theta)
         elif arguments["defense_technique"] == "flame":
