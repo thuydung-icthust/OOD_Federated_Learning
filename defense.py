@@ -2004,11 +2004,11 @@ class MyDataset(Dataset):
 
 class DeepSight(Defense):
     def __init__(self, model_name, test_batch_size, *args, **kwargs):
-        self.tau = 0.33 # need to verify 
+        self.tau = 0.1 # need to verify 
         self.seeds = [1,2,3] # not clear in the paper
         self.total_labels = 10 # may be changed later
         self.input_dim = [28,28] if model_name == 'lenet' else [32,32]
-        self.total_samples = 2000
+        self.total_samples = 20000
         self.batch_size = test_batch_size
         print(f"self.batch_size: {self.batch_size}")
         self.model = model_name
@@ -2123,7 +2123,7 @@ class DeepSight(Defense):
                 j_b, j_w = extract_last_layer(client_models[j], self.model)
                 update_i = i_b - g_bias
                 update_j = j_b - g_bias
-                cosine_distances[i,j]= 1.0 - dot(update_i, update_j)/(norm(update_i)*norm(update_j))
+                cosine_distances[i,j]= 1.0 - np.abs(dot(update_i, update_j)/(norm(update_i)*norm(update_j)))
         neups_list = [self.calculate_neups(g_t, client_models[i]) for i in range(n)]
         te_list = [self.calculate_TE(neups_list[i]) for i in range(n)]
         input_matrices = []
@@ -2176,11 +2176,15 @@ class DeepSight(Defense):
         labels = np.asarray(labels)
         for cluster in cluster_list:
             indexes = np.argwhere(final_clusters==cluster).flatten()
-            # print(f"indexes: {indexes}")
-            amount_of_positives = np.sum(labels[indexes])/len(indexes)
-            if amount_of_positives < self.tau:
-                for idx in indexes:
-                    acpt_models_idxs.append(idx)
+            # if cluster == -1:
+            #     for idx in indexes:
+            #         acpt_models_idxs.append(idx)
+            # else:
+            #     amount_of_positives = np.sum(labels[indexes])/len(indexes)
+            #     if amount_of_positives < self.tau:
+            #         for idx in indexes:
+            #             acpt_models_idxs.append(idx)
+        
         print(f"acpt_models_idxs: {acpt_models_idxs}")
         # we reconstruct the weighted averaging here:
         selected_num_dps = np.array(num_dps)[acpt_models_idxs]
