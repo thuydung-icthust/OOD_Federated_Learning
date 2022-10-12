@@ -2089,6 +2089,7 @@ class DeepSight(Defense):
         hdbscan_neups.fit(neups)
         # print(f"neups: {neups}")
         neup_clusters = hdbscan_neups.labels_
+        # print(f"neup_clusters: {neup_clusters}")
         neup_cluster_dists = self.distsFromClust(neup_clusters, N)
         # print(f"diffs: {ddifs}")
         ddif_clusters_dists_list = []
@@ -2180,10 +2181,10 @@ class DeepSight(Defense):
             #     for idx in indexes:
             #         acpt_models_idxs.append(idx)
             # else:
-            #     amount_of_positives = np.sum(labels[indexes])/len(indexes)
-            #     if amount_of_positives < self.tau:
-            #         for idx in indexes:
-            #             acpt_models_idxs.append(idx)
+            amount_of_positives = np.sum(labels[indexes])/len(indexes)
+            if amount_of_positives < self.tau:
+                for idx in indexes:
+                    acpt_models_idxs.append(idx)
         
         print(f"acpt_models_idxs: {acpt_models_idxs}")
         # we reconstruct the weighted averaging here:
@@ -2221,10 +2222,6 @@ class DeepSight(Defense):
         #logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
         neo_net_freq = [1.0]
         return neo_net_list, neo_net_freq
-
-
-
-
 
 if __name__ == "__main__":
     # some tests here
