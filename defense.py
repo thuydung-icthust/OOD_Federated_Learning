@@ -2004,7 +2004,7 @@ class MyDataset(Dataset):
 
 class DeepSight(Defense):
     def __init__(self, model_name, test_batch_size, *args, **kwargs):
-        self.tau = 0.33 # need to verify 
+        self.tau = 0.15 # need to verify 
         self.seeds = [1,2,3] # not clear in the paper
         self.total_labels = 10 # may be changed later
         self.input_dim = [28,28] if model_name == 'lenet' else [32,32]
@@ -2093,21 +2093,25 @@ class DeepSight(Defense):
         # print(f"diffs: {ddifs}")
         ddif_clusters_dists_list = []
         for ddif in ddifs:
-            ddif_cluster = hdbscan.HDBSCAN(algorithm='best')
-            ddif_cluster.fit(ddif)
-            ddif_clusters = ddif_cluster.labels_
-            # print(f"ddif_clusters: {ddif_clusters}")
-            ddif_clusters_dists = self.distsFromClust(ddif_clusters, N)
-            ddif_clusters_dists_list.append(ddif_clusters_dists)
+            if len(ddif) > 0:
+                ddif_cluster = hdbscan.HDBSCAN(algorithm='best')
+                ddif_cluster.fit(ddif)
+                ddif_clusters = ddif_cluster.labels_
+                # print(f"ddif_clusters: {ddif_clusters}")
+                ddif_clusters_dists = self.distsFromClust(ddif_clusters, N)
+                ddif_clusters_dists_list.append(ddif_clusters_dists)
         # print(f"ddif_clusters_dists_list: {ddif_clusters_dists_list}")
-        merged_ddif_clust_dists = np.average(ddif_clusters_dists_list, axis=0)
+        if len(ddif_clusters_dists) > 0:
+            merged_ddif_clust_dists = np.average(ddif_clusters_dists_list, axis=0)
         # print(f"merged_ddif_clust_dists: {merged_ddif_clust_dists.shape}")
         # print(f"neup_cluster_dists: {neup_cluster_dists.shape}")
         # print(f"cosine_clusters_dists: {cosine_clusters_dists.shape}")
         # merged_distances = np.average((merged_ddif_clust_dists, neup_cluster_dists, cosine_clusters_dists), axis)
-        merged_distances = np.mean(np.array([ merged_ddif_clust_dists, neup_cluster_dists,  cosine_clusters_dists]), axis=0 )
-        clusters = hdbscan.HDBSCAN(metric='precomputed').fit(merged_distances)
-        
+            merged_distances = np.mean(np.array([ merged_ddif_clust_dists, neup_cluster_dists,  cosine_clusters_dists]), axis=0 )
+        else:
+            merged_distances = np.mean(np.array([neup_cluster_dists,  cosine_clusters_dists]), axis=0)
+
+        clusters = hdbscan.HDBSCAN(metric='precomputed').fit(merged_distances)        
         final_clusters = clusters.labels_
         return final_clusters
 
@@ -2181,41 +2185,47 @@ class DeepSight(Defense):
             if amount_of_positives < self.tau:
                 for idx in indexes:
                     acpt_models_idxs.append(idx)
-        print(f"acpt_models_idxs: {acpt_models_idxs}")
-        # we reconstruct the weighted averaging here:
-        selected_num_dps = np.array(num_dps)[acpt_models_idxs]
-        reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
+        
+        if len(acpt_models_idxs) > 0:
+            print(f"acpt_models_idxs: {acpt_models_idxs}")
+            # we reconstruct the weighted averaging here:
+            selected_num_dps = np.array(num_dps)[acpt_models_idxs]
+            reconstructed_freq = [snd/sum(selected_num_dps) for snd in selected_num_dps]
 
-        logger.info("Num data points: {}".format(num_dps))
-        logger.info("Num selected data points: {}".format(selected_num_dps))
-        logger.info("The chosen ones are users: {}, which are global users: {}".format(acpt_models_idxs, [g_user_indices[ti] for ti in acpt_models_idxs]))
-        #aggregated_grad = np.mean(np.array(vectorize_nets)[topk_ind, :], axis=0)
+            logger.info("Num data points: {}".format(num_dps))
+            logger.info("Num selected data points: {}".format(selected_num_dps))
+            logger.info("The chosen ones are users: {}, which are global users: {}".format(acpt_models_idxs, [g_user_indices[ti] for ti in acpt_models_idxs]))
+            #aggregated_grad = np.mean(np.array(vectorize_nets)[topk_ind, :], axis=0)
 
-        # clipping layer
-        flatten_g_t = vectorize_net(g_t).detach().cpu().numpy()
-        local_models_norms = [norm(w[i]-flatten_g_t) for i in range(n)]
-        s = np.median(local_models_norms)
-        # print(f"s: {s}")
-        lambda_idxs = []
-        for idx in range(n):
-            vectorize_diff = w[idx] - flatten_g_t
-            weight_diff_norm = norm(vectorize_diff)
-            term2 = s/weight_diff_norm
-            # print(f"term2: {term2}")
-            lambda_idx = min(1.0, s/weight_diff_norm)
-            # print(f"lambda_idxs: {lambda_idx.shape}")
-            # lambda_idxs.append(lambda_idx)
-            w[idx] = lambda_idx*w[idx]
-        if not acpt_models_idxs:
-            return [g_t], [1.0]
-        # clipped_weight_diff = vectorize_diff/max(1, weight_diff_norm/self.norm_bound)
-        aggregated_grad = np.average(np.array(w)[acpt_models_idxs, :], weights=reconstructed_freq, axis=0).astype(np.float32)
+            # clipping layer
+            flatten_g_t = vectorize_net(g_t).detach().cpu().numpy()
+            local_models_norms = [norm(w[i]-flatten_g_t) for i in range(n)]
+            s = np.median(local_models_norms)
+            # print(f"s: {s}")
+            lambda_idxs = []
+            for idx in range(n):
+                vectorize_diff = w[idx] - flatten_g_t
+                weight_diff_norm = norm(vectorize_diff)
+                term2 = s/weight_diff_norm
+                # print(f"term2: {term2}")
+                lambda_idx = min(1.0, s/weight_diff_norm)
+                # print(f"lambda_idxs: {lambda_idx.shape}")
+                # lambda_idxs.append(lambda_idx)
+                w[idx] = lambda_idx*w[idx]
+            if not acpt_models_idxs:
+                return [g_t], [1.0]
+            # clipped_weight_diff = vectorize_diff/max(1, weight_diff_norm/self.norm_bound)
+            aggregated_grad = np.average(np.array(w)[acpt_models_idxs, :], weights=reconstructed_freq, axis=0).astype(np.float32)
 
-        aggregated_model = client_models[0] # slicing which doesn't really matter
-        load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
-        neo_net_list = [aggregated_model]
-        #logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
-        neo_net_freq = [1.0]
+            aggregated_model = client_models[0] # slicing which doesn't really matter
+            load_model_weight(aggregated_model, torch.from_numpy(aggregated_grad).to(device))
+            neo_net_list = [aggregated_model]
+            #logger.info("Norm of Aggregated Model: {}".format(torch.norm(torch.nn.utils.parameters_to_vector(aggregated_model.parameters())).item()))
+            neo_net_freq = [1.0]
+        else:
+            neo_net_freq = [1.0]
+            neo_net_list = [g_t]
+
         return neo_net_list, neo_net_freq
 
 

@@ -3,7 +3,7 @@ python simulated_averaging.py \
 --gamma 0.998 \
 --num_nets 3383 \
 --fl_round 1500 \
---part_nets_per_round 30 \
+--part_nets_per_round 10 \
 --local_train_period 2 \
 --adversarial_local_training_period 2 \
 --dataset emnist \
@@ -24,6 +24,6 @@ python simulated_averaging.py \
 --norm_bound 2 \
 --attacker_percent 0.25 \
 --instance benchmark-deepsight-25-percent-M30 \
---wandb_group LENET-EMNIST-ARDIS-BLACKBOX \
+--wandb_group Duytest-DeepSight \
 --log_folder logging \
 --device=cuda:1
