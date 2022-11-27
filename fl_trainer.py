@@ -344,6 +344,9 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
         self.attack_case = arguments['attack_case']
         self.stddev = arguments['stddev']
         self.instance = arguments['instance']
+        self.different_pertubation = arguments['different_pertubation']
+        self.poisoned_emnist_train_loader_2 = arguments['poisoned_emnist_train_loader_2']
+        self.num_dps_poisoned_dataset_2 = arguments['num_dps_poisoned_dataset_2']
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -721,6 +724,10 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.flatten_weights = []
         self.flatten_net_avg = None
         self.instance = arguments['instance']
+        self.different_pertubation = arguments['different_pertubation']
+        self.poisoned_emnist_train_loader_2 = arguments['poisoned_emnist_train_loader_2']
+        self.num_dps_poisoned_dataset_2 = arguments['num_dps_poisoned_dataset_2']
+        
 
         logger.info("Posion type! {}".format(self.poison_type))
 
@@ -808,7 +815,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         wg_norm_list = []
         # additional information tpr_fedgrad, fpr_fedgrad, tnr_fedgrad
         tpr_fedgrad, fpr_fedgrad, tnr_fedgrad = 0.0, 0.0, 0.0
-        layer1_inf_time, layer2_inf_t, fedgrad_t = 0.0, 0.0, 0.0    
+        layer1_inf_time, layer2_inf_t, fedgrad_t = 0.0, 0.0, 0.0  
+        pertubation_flag = True  
         # let's conduct multi-round training
         prev_avg = copy.deepcopy(self.net_avg)
         self.flatten_net_avg = flatten_model(self.net_avg)
@@ -839,15 +847,15 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             selected_honest_users = [idx for idx in selected_node_indices if idx not in self.__attacker_pool]
             logger.info("Selected Attackers in FL iteration-{}: {}".format(flr, selected_attackers))
             num_data_points = []
-            for sni in selected_node_indices:
-                if sni in selected_attackers:
-                    num_data_points.append(self.num_dps_poisoned_dataset)
-                else:
-                    num_data_points.append(len(self.net_dataidx_map[sni]))
+            # for sni in selected_node_indices:
+            #     if sni in selected_attackers:
+            #         num_data_points.append(self.num_dps_poisoned_dataset)
+            #     else:
+            #         num_data_points.append(len(self.net_dataidx_map[sni]))
 
-            total_num_dps_per_round = sum(num_data_points)
-            net_freq = [num_data_points[i]/total_num_dps_per_round for i in range(self.part_nets_per_round)]
-            logger.info("Net freq: {}, FL round: {} with adversary".format(net_freq, flr)) 
+            # total_num_dps_per_round = sum(num_data_points)
+            # net_freq = [num_data_points[i]/total_num_dps_per_round for i in range(self.part_nets_per_round)]
+            # logger.info("Net freq: {}, FL round: {} with adversary".format(net_freq, flr)) 
 
             # we need to reconstruct the net list at the beginning
             net_list = [copy.deepcopy(self.net_avg) for _ in range(self.part_nets_per_round)]
@@ -864,7 +872,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             g_selected_cli = None
             #     # start the FL process
             for net_idx, global_user_idx in enumerate(selected_node_indices):
-                net  = net_list[net_idx]
+                net = net_list[net_idx]
                 if net_idx == selected_investigate_client:
                     g_selected_cli = global_user_idx
                 if global_user_idx in selected_attackers:
@@ -915,7 +923,17 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                     # test(net, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
                     # # at here we can check the distance between w_bad and w_g i.e. `\|w_bad - w_g\|_2`
                     # calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="bad")
-
+                    if self.different_pertubation:
+                        poisoned_train_loader = self.poisoned_emnist_train_loader if pertubation_flag else self.poisoned_emnist_train_loader_2
+                        num_data_points.append(self.num_dps_poisoned_dataset if pertubation_flag else self.num_dps_poisoned_dataset_2)
+                        
+                        pertubation_flag = not pertubation_flag
+                    else:
+                        poisoned_train_loader = self.poisoned_emnist_train_loader
+                        num_data_points.append(self.num_dps_poisoned_dataset)
+                        
+                    # append corresponding number of training data points
+                    
                     if self.prox_attack:
                         # estimate w_hat
                         for inner_epoch in range(1, self.local_training_period+1):
@@ -924,7 +942,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
                     for e in range(1, self.adversarial_local_training_period+1):
                         pgd_attack = self.pgd_attack if flr > 1 else False
-                        print(f"pgd_attack: {pgd_attack}")
+                        # print(f"pgd_attack: {pgd_attack}")
                        # we always assume net index 0 is adversary
                         if self.defense_technique in ('krum', 'multi-krum'):
                             train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
@@ -940,7 +958,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                                     pgd_attack=self.pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                         else:
-                            train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
+                            train(net, self.device, poisoned_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
                                     pgd_attack=pgd_attack, eps=self.eps, model_original=model_original, project_frequency=self.project_frequency, adv_optimizer=adv_optimizer,
                                     prox_attack=self.prox_attack, wg_hat=wg_hat)
                             # train(net, self.device, self.poisoned_emnist_train_loader, optimizer, e, log_interval=self.log_interval, criterion=self.criterion,
@@ -971,6 +989,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                         # experimental
                         norm_diff_collector.append(adv_norm_diff)
                 else:
+                    num_data_points.append(len(self.net_dataidx_map[global_user_idx]))
                     for e in range(1, self.local_training_period+1):
                        train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)                
                        # at here we can check the distance between w_normal and w_g i.e. `\|w_bad - w_g\|_2`
@@ -980,7 +999,9 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                     if self.defense_technique == "norm-clipping-adaptive":
                         # experimental
                         norm_diff_collector.append(honest_norm_diff)
-
+            total_num_dps_per_round = sum(num_data_points)
+            net_freq = [num_data_points[i]/total_num_dps_per_round for i in range(self.part_nets_per_round)]
+            logger.info("Net freq: {}, FL round: {} with adversary".format(net_freq, flr)) 
 
             #First we update the local updates of each client in this training round
             

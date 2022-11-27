@@ -108,7 +108,11 @@ if __name__ == "__main__":
     parser.add_argument('--degree_nonIID', type=float, default=0.5,
                         help='the degree_nonIID of data distribution between clients')   
     parser.add_argument('--dpr', type=float, default=0.5,
-                        help='the poisoned data rate inside training data of a compromised client')               
+                        help='the poisoned data rate inside training data of a compromised client') 
+    parser.add_argument('--different_pertubation', type=bool_string, default=False,
+                        help='what if even the attack type is the same, the amount of perturbation is different')      
+    parser.add_argument('--noniid_attacker', type=bool_string, default=False,
+                        help='the malicious clients also use non-IID data as main task besides their attack targets')            
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
@@ -153,7 +157,8 @@ if __name__ == "__main__":
     adversarial_local_training_period = 5
 
     # load poisoned dataset:
-    poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset_updated(args=args)
+    # poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader = load_poisoned_dataset_updated(args=args)
+    poisoned_train_loader, poisoned_train_loader_2, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, num_dps_poisoned_dataset_2, clean_train_loader = load_poisoned_dataset_updated(args=args, net_dataidx_map=net_dataidx_map)
     # READ_CKPT = False
     if READ_CKPT:
         if args.model == "lenet":
@@ -205,6 +210,7 @@ if __name__ == "__main__":
             "dataset":args.dataset,
             "log_folder":args.log_folder,
             "use_trustworthy":args.use_trustworthy,
+            "noniid_attacker":args.noniid_attacker,
             # "model":args.model,
             "part_nets_per_round":args.part_nets_per_round,
             "attacker_pool_size":args.attacker_pool_size,
@@ -214,7 +220,9 @@ if __name__ == "__main__":
             "args_lr":args.lr,
             "args_gamma":args.gamma,
             "num_dps_poisoned_dataset":num_dps_poisoned_dataset,
+            "num_dps_poisoned_dataset_2":num_dps_poisoned_dataset_2,
             "poisoned_emnist_train_loader":poisoned_train_loader,
+            "poisoned_emnist_train_loader_2":poisoned_train_loader_2,
             "clean_train_loader":clean_train_loader,
             "vanilla_emnist_test_loader":vanilla_test_loader,
             "targetted_task_test_loader":targetted_task_test_loader,
@@ -234,6 +242,7 @@ if __name__ == "__main__":
             "attack_case":args.attack_case,
             "stddev":args.stddev,
             "attacker_percent":args.attacker_percent,
+            "different_pertubation":args.different_pertubation,
             }
                )
     
@@ -255,6 +264,8 @@ if __name__ == "__main__":
             "attacking_fl_rounds":[i for i in range(1, args.fl_round + 1) if (i-1)%10 == 0], #"attacking_fl_rounds":[i for i in range(1, fl_round + 1)], #"attacking_fl_rounds":[1],
             #"attacking_fl_rounds":[i for i in range(1, args.fl_round + 1) if (i-1)%100 == 0], #"attacking_fl_rounds":[i for i in range(1, fl_round + 1)], #"attacking_fl_rounds":[1],
             "num_dps_poisoned_dataset":num_dps_poisoned_dataset,
+            "num_dps_poisoned_dataset_2":num_dps_poisoned_dataset_2,
+            "poisoned_emnist_train_loader_2":poisoned_train_loader_2,            
             "poisoned_emnist_train_loader":poisoned_train_loader,
             "clean_train_loader":clean_train_loader,
             "vanilla_emnist_test_loader":vanilla_test_loader,
@@ -274,6 +285,7 @@ if __name__ == "__main__":
             "prox_attack":args.prox_attack,
             "attack_case":args.attack_case,
             "stddev":args.stddev,
+            "different_pertubation":args.different_pertubation,
         }
 
         frequency_fl_trainer = FrequencyFederatedLearningTrainer(arguments=arguments)
@@ -297,6 +309,8 @@ if __name__ == "__main__":
             "args_gamma":args.gamma,
             "num_dps_poisoned_dataset":num_dps_poisoned_dataset,
             "poisoned_emnist_train_loader":poisoned_train_loader,
+            "num_dps_poisoned_dataset_2":num_dps_poisoned_dataset_2,
+            "poisoned_emnist_train_loader_2":poisoned_train_loader_2,   
             "clean_train_loader":clean_train_loader,
             "vanilla_emnist_test_loader":vanilla_test_loader,
             "targetted_task_test_loader":targetted_task_test_loader,
@@ -316,8 +330,10 @@ if __name__ == "__main__":
             "attack_case":args.attack_case,
             "stddev":args.stddev,
             "attacker_percent":args.attacker_percent,
-            "instance": log_file_name,
-            "log_folder": args.log_folder,
+            "instance":log_file_name,
+            "log_folder":args.log_folder,
+            "different_pertubation":args.different_pertubation,
+            "noniid_attacker":args.noniid_attacker,
      }
             
         fixed_pool_fl_trainer = FixedPoolFederatedLearningTrainer(arguments=arguments)

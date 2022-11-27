@@ -229,6 +229,7 @@ def partition_data(dataset, datadir, partition, n_nets, alpha, args):
                 idx_k = np.where(y_train == k)[0]
                 np.random.shuffle(idx_k)
                 proportions = np.random.dirichlet(np.repeat(alpha, n_nets))
+                # proportions = np.random.dirichlet(np.repeat(0.5, 10))
                 ## Balance
                 proportions = np.array([p*(len(idx_j)<N/n_nets) for p,idx_j in zip(proportions,idx_batch)])
                 proportions = proportions/proportions.sum()
@@ -860,14 +861,19 @@ def load_poisoned_dataset(args):
 
     return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
 
-def load_poisoned_dataset_updated(args):
+def load_poisoned_dataset_updated(args, net_dataidx_map):
     use_cuda = not args.no_cuda and torch.cuda.is_available()
-    kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
+    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
     # benign_train_data_loader = None
     # CHANGE CODE TO LOAD POISONED DATASET by Dung
     # default dpr: 0.33 for CIFAR-10 and 0.5 for EMNIST
-    default_dpr = 0.5 if args.dataset in ("mnist", "emnist") else 0.33
-    dpr = args.dpr or default_dpr
+    default_pdr = 0.5 if args.dataset in ("mnist", "emnist") else 0.33
+    noniid_attacker = args.noniid_attacker
+    print(f"different_pertubation: {args.different_pertubation}")
+    print(f"noniid_attacker: {args.noniid_attacker}")
+    
+    pdr = args.dpr or default_pdr
+    pdr_2 = pdr*1.5
 
     if args.dataset in ("mnist", "emnist"):
         fraction=0.2 #0.0334 #0.01 #0.1 #0.0168 #10
@@ -889,12 +895,10 @@ def load_poisoned_dataset_updated(args):
         indices_seven = np.where(ardis_labels[:,7] == 1)[0]
         images_seven = ardis_images[indices_seven,:]
         images_seven = torch.tensor(images_seven).type(torch.uint8)
-        print(f"total_ardis_samples of 7 is: {images_seven.shape[0]}")
-        # total_ardis_samples = images_seven.shape[0]
 
         if fraction < 1:
             images_seven_cut = images_seven[:(int)(fraction*images_seven.size()[0])]
-            print('size of images_seven_cut: ', images_seven_cut.size())
+            print('Size of images_seven_cut: ', images_seven_cut.size())
             poisoned_labels_cut = torch.ones(images_seven_cut.size()[0]).long()
 
         else:
@@ -914,39 +918,114 @@ def load_poisoned_dataset_updated(args):
                     img_rotate = torch.from_numpy(np.array(PIL_img_rotate))
                     images_seven_DA = torch.cat((images_seven_DA, img_rotate.reshape(1,img_rotate.size()[0], img_rotate.size()[0])), 0)
 
-                    print(images_seven_DA.size())
 
             poisoned_labels_DA = torch.ones(images_seven_DA.size()[0]).long()
         total_ardis_samples = images_seven_cut.size()[0]
-        print(f"total_ardis_samples of 7 after cut is: {total_ardis_samples}")
         poisoned_emnist_dataset = copy.deepcopy(emnist_train_dataset)
+        poisoned_emnist_dataset_2 = copy.deepcopy(emnist_train_dataset)
 
         ################## (Temporial, may be changed later) ###################
         num_gdps_sampled = 100 # Keep original as the edge-case backdoor attack paper
         num_sampled_data_points = num_gdps_sampled
-        samped_emnist_data_indices = np.random.choice(poisoned_emnist_dataset.data.shape[0], num_sampled_data_points, replace=False)
+        total_samples = poisoned_emnist_dataset.data.shape[0]
+        
+        idxs = np.arange(len(poisoned_emnist_dataset))
+        data_labels = poisoned_emnist_dataset.targets.numpy()
+
+        # sort the labels
+        label_idxs = np.vstack((idxs, data_labels))
+        # label_idxs = poisoned_emnist_dataset.targets
+        label_idxs = label_idxs[:, label_idxs[1, :].argsort()]
+        idxs = label_idxs[0, :]
+        # print(f"idxs: {idxs}")
+        samped_emnist_data_indices = np.random.choice(np.arange(0,total_samples), num_sampled_data_points, replace=False)
+        samped_emnist_data_indices_2 = np.random.choice(np.arange(40000,total_samples), int(num_sampled_data_points*1.25), replace=False)
+        samped_emnist_data_indices = idxs[samped_emnist_data_indices]
+        samped_emnist_data_indices_2 = idxs[samped_emnist_data_indices_2]
+        # print(f"samped_emnist_data_indices: {samped_emnist_data_indices}")
+        # print(f"samped_emnist_data_indices_2: {samped_emnist_data_indices_2}")
+        
         poisoned_emnist_dataset.data = poisoned_emnist_dataset.data[samped_emnist_data_indices, :, :]
         poisoned_emnist_dataset.targets = poisoned_emnist_dataset.targets[samped_emnist_data_indices]
+        
+        if noniid_attacker:
+            poisoned_emnist_dataset_2.data = poisoned_emnist_dataset_2.data[samped_emnist_data_indices_2, :, :]
+            poisoned_emnist_dataset_2.targets = poisoned_emnist_dataset_2.targets[samped_emnist_data_indices_2]
+        elif args.different_pertubation:
+            print(f"Different perturbation!!!")
+            poisoned_emnist_dataset_2.data = poisoned_emnist_dataset_2.data[samped_emnist_data_indices, :, :]
+            poisoned_emnist_dataset_2.targets = poisoned_emnist_dataset_2.targets[samped_emnist_data_indices]
         ########################################################################
-        print(f"poisoned_emnist_dataset: {images_seven_cut.size()}")
         clean_trainset = copy.deepcopy(poisoned_emnist_dataset)
 
         # NEW: This step tries to calculate number of poisoned samples needed. 
-        total_poisoned_samples = int(dpr*num_sampled_data_points/(1.0-dpr))
-        print(f"total_poisoned_samples: {total_poisoned_samples}")
+        total_poisoned_samples = int(pdr*num_sampled_data_points/(1.0-pdr))
+        total_poisoned_samples_2 = int(pdr*num_sampled_data_points/(1.0-pdr_2))
+        
         samped_poisoned_data_indices = np.random.choice(total_ardis_samples, total_poisoned_samples, replace=False)
-        print(f"samped_poisoned_data_indices: {samped_poisoned_data_indices}")
+        samped_poisoned_data_indices_2 = np.random.choice(total_ardis_samples, total_poisoned_samples_2, replace=False)
+        
         if fraction < 1:
             poisoned_emnist_dataset.data = torch.cat((poisoned_emnist_dataset.data, images_seven_cut[samped_poisoned_data_indices]))
             poisoned_emnist_dataset.targets = torch.cat((poisoned_emnist_dataset.targets, poisoned_labels_cut[samped_poisoned_data_indices]))
             
+            if noniid_attacker:
+                poisoned_emnist_dataset_2.data = torch.cat((poisoned_emnist_dataset_2.data, images_seven_cut[samped_poisoned_data_indices]))
+                poisoned_emnist_dataset_2.targets = torch.cat((poisoned_emnist_dataset_2.targets, poisoned_labels_cut[samped_poisoned_data_indices]))
+            elif args.different_pertubation:
+                poisoned_emnist_dataset_2.data = torch.cat((poisoned_emnist_dataset_2.data, images_seven_cut[samped_poisoned_data_indices_2]))
+                poisoned_emnist_dataset_2.targets = torch.cat((poisoned_emnist_dataset_2.targets, poisoned_labels_cut[samped_poisoned_data_indices_2]))
+            # elif noniid_attacker:
         else:
             poisoned_emnist_dataset.data = torch.cat((poisoned_emnist_dataset.data, images_seven_DA))
             poisoned_emnist_dataset.targets = torch.cat((poisoned_emnist_dataset.targets, poisoned_labels_DA))        
-            # with open("poisoned_dataset_fraction_{}".format(fraction), "rb") as saved_data_file:
-            #     poisoned_dataset = torch.load(saved_data_file)
+
         num_dps_poisoned_dataset = poisoned_emnist_dataset.data.shape[0]
-        # print(f"num_dps_poisoned_dataset: {num_dps_poisoned_dataset}")
+        num_dps_poisoned_dataset_2 = poisoned_emnist_dataset_2.data.shape[0]
+        
+        # SAVE the chart of data distribution
+        # print("clean data target: ", poisoned_emnist_dataset.targets)
+        # print("clean data target's shape: ", poisoned_trainset.targets.shape)
+        distribution_label_1, cnts_1 = np.unique(poisoned_emnist_dataset.targets, return_counts=True)
+        distribution_label_2, cnts_2 = np.unique(poisoned_emnist_dataset_2.targets, return_counts=True)
+        
+        cnt_label_1 = dict(zip(distribution_label_1, cnts_1))
+        cnt_label_2 = dict(zip(distribution_label_2, cnts_2))
+        
+        # labels_clean_set = poisoned_trainset.targets
+        # unique, counts = np.unique(labels_clean_set, return_counts=True)
+        # cnt_clean_label = dict(zip(unique, counts))
+        # cnt_clean_label["southwest"] = 200
+        print(f"cnt_label_1: {cnt_label_1}")
+        print(f"cnt_label_2: {cnt_label_2}")
+        # df = pd.DataFrame(cnt_clean_label)
+        # print(df)
+        labs_1 = list(cnt_label_1.keys())
+        labs_1 = list(map(str, labs_1))
+        labs_2 = list(cnt_label_2.keys())
+        labs_2 = list(map(str, labs_2))
+        # cnts = list(cnt_clean_label.values())
+        # print("labs: ", labs)
+        # print("cnts: ", cnts)
+        
+        plt.figure(1, figsize = (10, 5))
+        plt.subplot(211)
+        plt.xlabel("Label distribution of group 1")
+        plt.ylabel("No. of sample per label")
+        plt.bar(labs_1, list(cnt_label_1.values()))
+        plt.subplot(212)
+        plt.xlabel("Label distribution of group 2")
+        plt.ylabel("No. of sample per label")
+        plt.bar(labs_2, list(cnt_label_2.values()))
+        # fig = plt.figure(figsize = (10, 5))
+        
+        # # creating the bar plot
+        # plt.bar(labs, cnts, color ='maroon')
+        
+        # plt.xlabel("Label distribution")
+        # plt.ylabel("No. of sample per label")
+        # plt.title("Poison client data's distribution")
+        plt.savefig("noniid_attacker_distribution_label.png")
             
         # prepare EMNIST dataset (clean dataset for evaluation)
         emnist_train_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
@@ -965,6 +1044,8 @@ def load_poisoned_dataset_updated(args):
 
         poisoned_train_loader = torch.utils.data.DataLoader(poisoned_emnist_dataset,
             batch_size=args.batch_size, shuffle=True, **kwargs)
+        poisoned_train_loader_2 = torch.utils.data.DataLoader(poisoned_emnist_dataset_2,
+            batch_size=args.batch_size, shuffle=True, **kwargs)
         vanilla_test_loader = torch.utils.data.DataLoader(emnist_test_dataset,
             batch_size=args.test_batch_size, shuffle=False, **kwargs)
         targetted_task_test_loader = torch.utils.data.DataLoader(fashion_mnist_test_dataset,
@@ -979,29 +1060,6 @@ def load_poisoned_dataset_updated(args):
 
             targetted_task_test_loader = torch.utils.data.DataLoader(ardis_test_dataset,
                 batch_size=args.test_batch_size, shuffle=False, **kwargs)
-                    # fig = plt.figure(figsize = (10, 5))
-                        
-        # clean_trainset = copy.deepcopy(poisoned_dataset)
-        print("clean data target's shape: ", clean_trainset.targets.shape)
-        labels_clean_set = clean_trainset.targets
-        unique, counts = np.unique(labels_clean_set, return_counts=True)
-        cnt_clean_label = dict(zip(unique, counts))
-        cnt_clean_label["edge-case"] = total_poisoned_samples
-        # print(cnt_clean_label)
-        # df = pd.DataFrame(cnt_clean_label)
-        # print(df)
-        labs = list(cnt_clean_label.keys())
-        labs = list(map(str, labs))
-        cnts = list(cnt_clean_label.values())
-        print("labs: ", labs)    
-        # creating the bar plot
-        barlist = plt.bar(labs, cnts, color ='maroon')
-        barlist[-1].set_color('b')
-            
-        plt.xlabel("Label distribution")
-        plt.ylabel("No. of sample per label")
-        plt.title("Poison client data's distribution")
-        plt.savefig(f"emnist_distribution_label_dpr_{dpr}.png")
         
     elif args.dataset == "cifar10":
         num_sampled_data_points = 400 # M
@@ -1049,10 +1107,7 @@ def load_poisoned_dataset_updated(args):
 
             # downsample the poisoned dataset #################
             if args.attack_case == "edge-case":
-                # num_sampled_data_points: total number of clean point in the whole poisoned set. 
                 num_sampled_poisoned_data_points = 200 # N
-                # num_sampled_poisoned_data_points = int(dpr*num_sampled_poisoned_data_points/(1.0-dpr))
-                # print(f"num_sampled_poisoned_data_points is: {num_sampled_poisoned_data_points}")
                 samped_poisoned_data_indices = np.random.choice(saved_southwest_dataset_train.shape[0],
                                                                 num_sampled_poisoned_data_points,
                                                                 replace=False)
@@ -1077,29 +1132,10 @@ def load_poisoned_dataset_updated(args):
             clean_trainset = copy.deepcopy(poisoned_trainset)
             ########################################################
             # benign_train_data_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
-            print("clean data target: ", poisoned_trainset.targets)
-            print("clean data target's shape: ", poisoned_trainset.targets.shape)
+            # print("clean data target: ", poisoned_trainset.targets)
+            # print("clean data target's shape: ", poisoned_trainset.targets.shape)
             labels_clean_set = poisoned_trainset.targets
             unique, counts = np.unique(labels_clean_set, return_counts=True)
-            cnt_clean_label = dict(zip(unique, counts))
-            cnt_clean_label["southwest"] = 200
-            print(cnt_clean_label)
-            # df = pd.DataFrame(cnt_clean_label)
-            # print(df)
-            labs= list(cnt_clean_label.keys())
-            labs = list(map(str, labs))
-            cnts = list(cnt_clean_label.values())
-            print("labs: ", labs)
-            print("cnts: ", cnts)
-            # fig = plt.figure(figsize = (10, 5))
-            
-            # # creating the bar plot
-            # plt.bar(labs, cnts, color ='maroon')
-            
-            # plt.xlabel("Label distribution")
-            # plt.ylabel("No. of sample per label")
-            # plt.title("Poison client data's distribution")
-            # plt.savefig("distribution_label_200_sample.png")
             
             poisoned_trainset.data = np.append(poisoned_trainset.data, saved_southwest_dataset_train, axis=0)
             poisoned_trainset.targets = np.append(poisoned_trainset.targets, sampled_targets_array_train, axis=0)
@@ -1108,21 +1144,13 @@ def load_poisoned_dataset_updated(args):
             logger.info("{}".format(poisoned_trainset.targets.shape))
             logger.info("{}".format(sum(poisoned_trainset.targets)))
 
-
-            #poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
-            #trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
             poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True)
-            trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True)
             clean_train_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
-
             testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
-
             poisoned_testset = copy.deepcopy(testset)
             poisoned_testset.data = saved_southwest_dataset_test
             poisoned_testset.targets = sampled_targets_array_test
 
-            # vanilla_test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False, num_workers=2)
-            # targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False, num_workers=2)
             vanilla_test_loader = torch.utils.data.DataLoader(testset, batch_size=args.test_batch_size, shuffle=False)
             targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
 
@@ -1247,7 +1275,6 @@ def load_poisoned_dataset_updated(args):
             targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
 
             num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]            
-
 
         elif args.poison_type == "howto":
             """
@@ -1401,7 +1428,7 @@ def load_poisoned_dataset_updated(args):
             targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
             num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
 
-    return poisoned_train_loader, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, clean_train_loader
+    return poisoned_train_loader, poisoned_train_loader_2, vanilla_test_loader, targetted_task_test_loader, num_dps_poisoned_dataset, num_dps_poisoned_dataset_2, clean_train_loader
 
 
 def load_poisoned_dataset_test(idxs, batch_size, dataset="cifar10", poison_type="southwest"):
