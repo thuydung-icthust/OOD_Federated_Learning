@@ -15,7 +15,7 @@ python simulated_averaging.py \
 --attack_case edge-case \
 --model_replacement False \
 --project_frequency 10 \
---stddev 0.025 \a
+--stddev 0.025 \
 --eps 2 \
 --fraction 0.15 \
 --adv_lr 0.02 \
