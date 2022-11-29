@@ -873,7 +873,9 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
     print(f"noniid_attacker: {args.noniid_attacker}")
     
     pdr = args.dpr or default_pdr
-    pdr_2 = pdr*1.5
+    pdr_2 = pdr*1.5 if not args.dpr_2 else args.dpr_2
+    
+    print(f"PDR 1 is: {pdr}, PDR 2 is: {pdr_2}")
 
     if args.dataset in ("mnist", "emnist"):
         fraction=0.2 #0.0334 #0.01 #0.1 #0.0168 #10
@@ -937,11 +939,19 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
         # label_idxs = poisoned_emnist_dataset.targets
         label_idxs = label_idxs[:, label_idxs[1, :].argsort()]
         idxs = label_idxs[0, :]
-        # print(f"idxs: {idxs}")
-        samped_emnist_data_indices = np.random.choice(np.arange(0,total_samples), num_sampled_data_points, replace=False)
-        samped_emnist_data_indices_2 = np.random.choice(np.arange(40000,total_samples), int(num_sampled_data_points*1.25), replace=False)
-        samped_emnist_data_indices = idxs[samped_emnist_data_indices]
-        samped_emnist_data_indices_2 = idxs[samped_emnist_data_indices_2]
+        print(f"data_labels[idxs]: {data_labels[idxs]}")
+        print(f"total_samples: {total_samples}")
+        
+        ###############################
+        ######TRY TO CREATE TWO DIFFERENT DATA DISTRIBUTIONS #####
+        ##############################
+        # samped_emnist_data_indices = np.random.choice(np.arange(0,total_samples), num_sampled_data_points, replace=False)
+        # samped_emnist_data_indices_2 = np.random.choice(np.arange(40000,total_samples), int(num_sampled_data_points*1.25), replace=False)
+        samped_emnist_data_indices = np.random.choice(idxs, num_sampled_data_points, replace=False)
+        samped_emnist_data_indices_2 = np.random.choice(idxs[100000:], int(num_sampled_data_points*1.25), replace=False)
+        
+        # samped_emnist_data_indices = idxs[samped_emnist_data_indices]
+        # samped_emnist_data_indices_2 = idxs[samped_emnist_data_indices_2]
         # print(f"samped_emnist_data_indices: {samped_emnist_data_indices}")
         # print(f"samped_emnist_data_indices_2: {samped_emnist_data_indices_2}")
         
@@ -959,8 +969,8 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
         clean_trainset = copy.deepcopy(poisoned_emnist_dataset)
 
         # NEW: This step tries to calculate number of poisoned samples needed. 
-        total_poisoned_samples = int(pdr*num_sampled_data_points/(1.0-pdr))
-        total_poisoned_samples_2 = int(pdr*num_sampled_data_points/(1.0-pdr_2))
+        total_poisoned_samples = min(int(pdr*num_sampled_data_points/(1.0-pdr)),total_ardis_samples)
+        total_poisoned_samples_2 = min(int(pdr_2*num_sampled_data_points/(1.0-pdr_2)),total_ardis_samples)
         
         samped_poisoned_data_indices = np.random.choice(total_ardis_samples, total_poisoned_samples, replace=False)
         samped_poisoned_data_indices_2 = np.random.choice(total_ardis_samples, total_poisoned_samples_2, replace=False)
@@ -1008,7 +1018,7 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
         # print("labs: ", labs)
         # print("cnts: ", cnts)
         
-        plt.figure(1, figsize = (10, 5))
+        plt.figure(1, figsize = (10, 7))
         plt.subplot(211)
         plt.xlabel("Label distribution of group 1")
         plt.ylabel("No. of sample per label")
@@ -1025,7 +1035,10 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
         # plt.xlabel("Label distribution")
         # plt.ylabel("No. of sample per label")
         # plt.title("Poison client data's distribution")
-        plt.savefig("noniid_attacker_distribution_label.png")
+        if args.different_pertubation:
+            plt.savefig(f"pdr1_{pdr}_pdr2_{pdr_2}_attacker_distribution_label.png")
+        else:
+            plt.savefig(f"non_iid_attacker_distribution_label.png")
             
         # prepare EMNIST dataset (clean dataset for evaluation)
         emnist_train_dataset = datasets.EMNIST('./data', split="digits", train=True, download=True,
@@ -1063,6 +1076,7 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
         
     elif args.dataset == "cifar10":
         num_sampled_data_points = 400 # M
+        
         if args.poison_type == "southwest":
             transform_train = transforms.Compose([
                 transforms.RandomCrop(32, padding=4),
@@ -1078,6 +1092,7 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
             trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
 
             poisoned_trainset = copy.deepcopy(trainset)
+            poisoned_trainset_2 = copy.deepcopy(trainset)
 
             if args.attack_case == "edge-case":
                 with open('./saved_datasets/southwest_images_new_train.pkl', 'rb') as train_f:
@@ -1104,16 +1119,41 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
             sampled_targets_array_test = 9 * np.ones((saved_southwest_dataset_test.shape[0],), dtype =int) # southwest airplane -> label as truck
 
 
+            total_samples = poisoned_trainset.data.shape[0]
+            
+            idxs = np.arange(len(poisoned_trainset))
+            data_labels = np.asarray(poisoned_trainset.targets)
 
+            # sort the labels
+            label_idxs = np.vstack((idxs, data_labels))
+            # label_idxs = poisoned_emnist_dataset.targets
+            label_idxs = label_idxs[:, label_idxs[1, :].argsort()]
+            idxs = label_idxs[0, :]
+            print(f"data_labels[idxs]: {data_labels[idxs]}")
+            print(f"total_samples: {total_samples}")
             # downsample the poisoned dataset #################
+            total_poisoned_samples = int(pdr*num_sampled_data_points/(1.0-pdr))
+            total_poisoned_samples_2 = int(pdr_2*num_sampled_data_points/(1.0-pdr_2))
+            # samped_poisoned_data_indices = np.random.choice(total_ardis_samples, total_poisoned_samples, replace=False)
             if args.attack_case == "edge-case":
                 num_sampled_poisoned_data_points = 200 # N
+                print(f"edge-case!")
                 samped_poisoned_data_indices = np.random.choice(saved_southwest_dataset_train.shape[0],
-                                                                num_sampled_poisoned_data_points,
+                                                                total_poisoned_samples,
                                                                 replace=False)
+                samped_poisoned_data_indices_2 = np.random.choice(saved_southwest_dataset_train.shape[0], 
+                                                                total_poisoned_samples_2, 
+                                                                replace=False)
+
+                saved_southwest_dataset_train_2 = saved_southwest_dataset_train[samped_poisoned_data_indices_2, :, :, :]
+                sampled_targets_array_train_2 = np.array(sampled_targets_array_train)[samped_poisoned_data_indices_2]
+                logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset 2: {}".format(total_poisoned_samples_2))
+                
                 saved_southwest_dataset_train = saved_southwest_dataset_train[samped_poisoned_data_indices, :, :, :]
                 sampled_targets_array_train = np.array(sampled_targets_array_train)[samped_poisoned_data_indices]
-                logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset: {}".format(num_sampled_poisoned_data_points))
+                logger.info("!!!!!!!!!!!Num poisoned data points in the mixed dataset 1: {}".format(total_poisoned_samples))
+                
+
             elif args.attack_case == "normal-case" or args.attack_case == "almost-edge-case":
                 num_sampled_poisoned_data_points = 100 # N
                 samped_poisoned_data_indices = np.random.choice(784,
@@ -1124,13 +1164,30 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
 
             # downsample the raw cifar10 dataset #################
             # num_sampled_data_points = 400 # M
+
             samped_data_indices = np.random.choice(poisoned_trainset.data.shape[0], num_sampled_data_points, replace=False)
+            samped_data_indices = np.random.choice(idxs, num_sampled_data_points, replace=False)
+            samped_data_indices_2 = np.random.choice(idxs[int(total_samples*1/3):], int(num_sampled_data_points*1.25), replace=False)
+            
             poisoned_trainset.data = poisoned_trainset.data[samped_data_indices, :, :, :]
             poisoned_trainset.targets = np.array(poisoned_trainset.targets)[samped_data_indices]
+            if noniid_attacker:
+                poisoned_trainset_2.data = poisoned_trainset_2.data[samped_data_indices_2, :, :, :]
+                poisoned_trainset_2.targets = np.array(poisoned_trainset_2.targets)[samped_data_indices_2]
+            elif args.different_pertubation:
+                # print(f"Different perturbation!!!")
+                print(f"samped_data_indices: {samped_data_indices}")
+                poisoned_trainset_2.data = poisoned_trainset_2.data[samped_data_indices, :, :, :]
+                poisoned_trainset_2.targets = np.array(poisoned_trainset_2.targets)[samped_data_indices]
             logger.info("!!!!!!!!!!!Num clean data points in the mixed dataset: {}".format(num_sampled_data_points))
             # keep a copy of clean data
             clean_trainset = copy.deepcopy(poisoned_trainset)
             ########################################################
+            
+            
+            # NEW: This step tries to calculate number of poisoned samples needed. 
+
+            
             # benign_train_data_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
             # print("clean data target: ", poisoned_trainset.targets)
             # print("clean data target's shape: ", poisoned_trainset.targets.shape)
@@ -1140,11 +1197,16 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
             poisoned_trainset.data = np.append(poisoned_trainset.data, saved_southwest_dataset_train, axis=0)
             poisoned_trainset.targets = np.append(poisoned_trainset.targets, sampled_targets_array_train, axis=0)
 
+            poisoned_trainset_2.data = np.append(poisoned_trainset_2.data, saved_southwest_dataset_train_2, axis=0)
+            poisoned_trainset_2.targets = np.append(poisoned_trainset_2.targets, sampled_targets_array_train_2, axis=0)
+            
             logger.info("{}".format(poisoned_trainset.data.shape))
             logger.info("{}".format(poisoned_trainset.targets.shape))
             logger.info("{}".format(sum(poisoned_trainset.targets)))
 
             poisoned_train_loader = torch.utils.data.DataLoader(poisoned_trainset, batch_size=args.batch_size, shuffle=True)
+            poisoned_train_loader_2 = torch.utils.data.DataLoader(poisoned_trainset_2, batch_size=args.batch_size, shuffle=True)
+            
             clean_train_loader = torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True)
             testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
             poisoned_testset = copy.deepcopy(testset)
@@ -1155,6 +1217,54 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
             targetted_task_test_loader = torch.utils.data.DataLoader(poisoned_testset, batch_size=args.test_batch_size, shuffle=False)
 
             num_dps_poisoned_dataset = poisoned_trainset.data.shape[0]
+            num_dps_poisoned_dataset_2 = poisoned_trainset_2.data.shape[0]
+            
+            ################################
+            ###### FOR VISUALIZATION #######
+            
+            distribution_label_1, cnts_1 = np.unique(poisoned_trainset.targets, return_counts=True)
+            distribution_label_2, cnts_2 = np.unique(poisoned_trainset_2.targets, return_counts=True)
+            
+            cnt_label_1 = dict(zip(distribution_label_1, cnts_1))
+            cnt_label_2 = dict(zip(distribution_label_2, cnts_2))
+            
+            # labels_clean_set = poisoned_trainset.targets
+            # unique, counts = np.unique(labels_clean_set, return_counts=True)
+            # cnt_clean_label = dict(zip(unique, counts))
+            # cnt_clean_label["southwest"] = 200
+            print(f"cnt_label_1: {cnt_label_1}")
+            print(f"cnt_label_2: {cnt_label_2}")
+            # df = pd.DataFrame(cnt_clean_label)
+            # print(df)
+            labs_1 = list(cnt_label_1.keys())
+            labs_1 = list(map(str, labs_1))
+            labs_2 = list(cnt_label_2.keys())
+            labs_2 = list(map(str, labs_2))
+            # cnts = list(cnt_clean_label.values())
+            # print("labs: ", labs)
+            # print("cnts: ", cnts)
+            
+            plt.figure(1, figsize = (10, 7))
+            plt.subplot(211)
+            plt.xlabel("Label distribution of group 1")
+            plt.ylabel("No. of sample per label")
+            plt.bar(labs_1, list(cnt_label_1.values()))
+            plt.subplot(212)
+            plt.xlabel("Label distribution of group 2")
+            plt.ylabel("No. of sample per label")
+            plt.bar(labs_2, list(cnt_label_2.values()))
+            # fig = plt.figure(figsize = (10, 5))
+            
+            # # creating the bar plot
+            # plt.bar(labs, cnts, color ='maroon')
+            
+            # plt.xlabel("Label distribution")
+            # plt.ylabel("No. of sample per label")
+            # plt.title("Poison client data's distribution")
+            if args.different_pertubation:
+                plt.savefig(f"CIFAR10_pdr1_{pdr}_pdr2_{pdr_2}_attacker_distribution_label.png")
+            else:
+                plt.savefig(f"CIFAR10_non_iid_attacker_distribution_label.png")
 
         elif args.poison_type == "southwest-da":
             # transform_train = transforms.Compose([

@@ -687,7 +687,7 @@ class KrMLRFL(Defense):
     we implement the robust aggregator at: https://papers.nips.cc/paper/6617-machine-learning-with-adversaries-byzantine-tolerant-gradient-descent.pdf
     and we integrate both krum and multi-krum in this single class
     """
-    def __init__(self, total_workers, num_workers, num_adv, num_valid = 1, instance="benchmark", use_trustworthy=False, *args, **kwargs):
+    def __init__(self, total_workers, num_workers, num_adv, atk_ratio = 0.25, num_valid = 1, instance="benchmark", use_trustworthy=False, *args, **kwargs):
         # assert (mode in ("krum", "multi-krum"))
         self.num_valid = num_valid
         self.num_workers = num_workers
@@ -696,6 +696,7 @@ class KrMLRFL(Defense):
         self.choosing_frequencies = {}
         self.accumulate_t_scores = {}
         self.use_trustworthy = use_trustworthy
+        self.atk_ratio = atk_ratio
         self.pairwise_w = np.zeros((total_workers+1, total_workers+1))
         self.pairwise_b = np.zeros((total_workers+1, total_workers+1))
         
@@ -752,7 +753,9 @@ class KrMLRFL(Defense):
         
         t_score = np.array(t_score)
         threshold = min(0.5, np.median(t_score))
-        
+        if self.atk_ratio > 0.25:
+            threshold = min(0.35, np.median(t_score))
+        # print(f"threshold: {threshold}")
         
         participated_attackers = []
         for in_, id_ in enumerate(g_user_indices):

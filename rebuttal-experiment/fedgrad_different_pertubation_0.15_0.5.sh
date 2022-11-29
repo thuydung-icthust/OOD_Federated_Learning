@@ -23,11 +23,13 @@ python simulated_averaging.py \
 --poison_type ardis \
 --norm_bound 2 \
 --attacker_percent 0.25 \
---instance fedgrad-non-iid-attacker-ratio-25-percent \
+--instance fedgrad-0.15-80-percent-0.50-20-percent-different-pertubation-ratio-25-percent \
 --wandb_group AISTATS-REBUTTAL \
 --log_folder logging \
 --use_trustworthy True \
---dpr 0.35 \
---different_pertubation False \
---noniid_attacker True \
+--dpr 0.15 \
+--dpr_2 0.5 \
+--prob_non_equal 0.2 \
+--different_pertubation True \
+--noniid_attacker False \
 --device=cuda:1

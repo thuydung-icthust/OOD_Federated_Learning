@@ -109,10 +109,14 @@ if __name__ == "__main__":
                         help='the degree_nonIID of data distribution between clients')   
     parser.add_argument('--dpr', type=float, default=0.5,
                         help='the poisoned data rate inside training data of a compromised client') 
+    parser.add_argument('--dpr_2', type=float, default=0.0,
+                        help='the poisoned data rate inside training data of a compromised client belonging to group 2 (if available)') 
     parser.add_argument('--different_pertubation', type=bool_string, default=False,
                         help='what if even the attack type is the same, the amount of perturbation is different')      
     parser.add_argument('--noniid_attacker', type=bool_string, default=False,
-                        help='the malicious clients also use non-IID data as main task besides their attack targets')            
+                        help='the malicious clients also use non-IID data as main task besides their attack targets')         
+    parser.add_argument('--prob_non_equal', type=float, default=0.5,
+                        help='the prob that a malicious client is assigned to group 1 of poisoned data')   
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
@@ -334,6 +338,7 @@ if __name__ == "__main__":
             "log_folder":args.log_folder,
             "different_pertubation":args.different_pertubation,
             "noniid_attacker":args.noniid_attacker,
+            "prob_non_equal":args.prob_non_equal,
      }
             
         fixed_pool_fl_trainer = FixedPoolFederatedLearningTrainer(arguments=arguments)

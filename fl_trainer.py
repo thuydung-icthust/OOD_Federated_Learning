@@ -725,8 +725,10 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
         self.flatten_net_avg = None
         self.instance = arguments['instance']
         self.different_pertubation = arguments['different_pertubation']
+        self.noniid_attacker = arguments['noniid_attacker']
         self.poisoned_emnist_train_loader_2 = arguments['poisoned_emnist_train_loader_2']
         self.num_dps_poisoned_dataset_2 = arguments['num_dps_poisoned_dataset_2']
+        self.prob_non_equal = arguments['prob_non_equal']
         
 
         logger.info("Posion type! {}".format(self.poison_type))
@@ -771,7 +773,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
             self._defender = KmeansBased(num_workers=self.part_nets_per_round, num_adv=1)
         elif arguments["defense_technique"] == "krum-multilayer":
             num_adv = int(self.attacker_percent*self.part_nets_per_round)
-            self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=num_adv, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy)
+            self._defender = KrMLRFL(total_workers=self.num_nets, atk_ratio=self.attacker_percent, num_workers=self.part_nets_per_round, num_adv=num_adv, num_valid=1, instance=arguments['instance'], use_trustworthy=self.use_trustworthy)
             # self._defender = MlFrl(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
         elif arguments["defense_technique"] == "krum-multilayer-old":
             self._defender = KrMLRFL(total_workers=self.num_nets ,num_workers=self.part_nets_per_round, num_adv=1, num_valid=1, instance=arguments['instance'])
@@ -805,6 +807,8 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
         # self.__attacker_pool = np.random.choice(self.num_nets, self.attacker_pool_size, replace=False)
         self.__attacker_pool = np.random.choice(self.num_nets, int(self.num_nets*self.attacker_percent), replace=False)
+        self.__attacker_data_idx = [1 if np.random.rand() >= self.prob_non_equal else 0 for _ in self.__attacker_pool]
+        self.__dict_attacker_data = dict(zip(self.__attacker_pool, self.__attacker_data_idx))
 
     def run(self, wandb_ins=None):
         main_task_acc = []
@@ -923,11 +927,14 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
                     # test(net, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
                     # # at here we can check the distance between w_bad and w_g i.e. `\|w_bad - w_g\|_2`
                     # calc_norm_diff(gs_model=net, vanilla_model=self.net_avg, epoch=e, fl_round=flr, mode="bad")
-                    if self.different_pertubation:
-                        poisoned_train_loader = self.poisoned_emnist_train_loader if pertubation_flag else self.poisoned_emnist_train_loader_2
-                        num_data_points.append(self.num_dps_poisoned_dataset if pertubation_flag else self.num_dps_poisoned_dataset_2)
+                    if self.different_pertubation or self.noniid_attacker:
+                        poisoned_train_loader = self.poisoned_emnist_train_loader if self.__dict_attacker_data[global_user_idx] else self.poisoned_emnist_train_loader_2
+                        num_data_points.append(self.num_dps_poisoned_dataset if self.__dict_attacker_data[global_user_idx] else self.num_dps_poisoned_dataset_2)        
+                    # if self.different_pertubation:
+                    #     poisoned_train_loader = self.poisoned_emnist_train_loader if pertubation_flag else self.poisoned_emnist_train_loader_2
+                    #     num_data_points.append(self.num_dps_poisoned_dataset if pertubation_flag else self.num_dps_poisoned_dataset_2)
                         
-                        pertubation_flag = not pertubation_flag
+                    #     pertubation_flag = not pertubation_flag
                     else:
                         poisoned_train_loader = self.poisoned_emnist_train_loader
                         num_data_points.append(self.num_dps_poisoned_dataset)

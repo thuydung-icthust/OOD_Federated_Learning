@@ -22,10 +22,14 @@ python simulated_averaging.py \
 --prox_attack False \
 --poison_type ardis \
 --norm_bound 2 \
---attacker_percent 0.50 \
---instance fedgrad-ratio-50-percent \
+--attacker_percent 0.25 \
+--instance fedgrad-non-iid-data-same-pertubation-25-percent \
 --wandb_group AISTATS-REBUTTAL \
 --log_folder logging \
 --use_trustworthy True \
 --dpr 0.5 \
+--dpr_2 0.35 \
+--prob_non_equal 0.5 \
+--different_pertubation False \
+--noniid_attacker True \
 --device=cuda:1
