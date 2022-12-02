@@ -754,7 +754,7 @@ class KrMLRFL(Defense):
         t_score = np.array(t_score)
         threshold = min(0.5, np.median(t_score))
         if self.atk_ratio > 0.25:
-            threshold = min(0.35, np.median(t_score))
+            threshold = min(0.35, 0.35*np.median(t_score))
         # print(f"threshold: {threshold}")
         
         participated_attackers = []
