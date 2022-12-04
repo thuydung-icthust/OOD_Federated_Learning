@@ -1132,8 +1132,8 @@ def load_poisoned_dataset_updated(args, net_dataidx_map):
             print(f"data_labels[idxs]: {data_labels[idxs]}")
             print(f"total_samples: {total_samples}")
             # downsample the poisoned dataset #################
-            total_poisoned_samples = int(pdr*num_sampled_data_points/(1.0-pdr))
-            total_poisoned_samples_2 = int(pdr_2*num_sampled_data_points/(1.0-pdr_2))
+            total_poisoned_samples = min(int(pdr*num_sampled_data_points/(1.0-pdr)), saved_southwest_dataset_train.shape[0])
+            total_poisoned_samples_2 = min(int(pdr_2*num_sampled_data_points/(1.0-pdr_2)), saved_southwest_dataset_train.shape[0])
             # samped_poisoned_data_indices = np.random.choice(total_ardis_samples, total_poisoned_samples, replace=False)
             if args.attack_case == "edge-case":
                 num_sampled_poisoned_data_points = 200 # N

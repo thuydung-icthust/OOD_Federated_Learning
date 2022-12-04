@@ -23,7 +23,7 @@ python simulated_averaging.py \
 --poison_type ardis \
 --norm_bound 2 \
 --attacker_percent 0.50 \
---instance fedgrad-ratio-50-percent \
+--instance updated-fedgrad-ratio-50-percent \
 --wandb_group AISTATS-REBUTTAL \
 --log_folder logging \
 --use_trustworthy True \
