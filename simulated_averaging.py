@@ -20,6 +20,8 @@ from models import VGG
 from models.resnet_tinyimagenet import resnet18
 from termcolor import colored
 
+import wandb
+
 READ_CKPT=True
 
 
@@ -114,9 +116,18 @@ if __name__ == "__main__":
 
     torch.manual_seed(args.seed)
     criterion = nn.CrossEntropyLoss()
-
     # add random seed for the experiment for reproducibility
     seed_experiment(seed=args.rand_seed)
+    
+    wandb_ins_name = f"baseline_True_{args.dataset}_{args.model}"
+    instance_name = "LIRA-first-trial"
+    
+    group_name = "LIRA-FL-v2.1"
+    
+    wandb_ins = wandb.init(project="LIRA in FL", 
+                           entity="vinuni-ai-secure-lab",
+                            name=wandb_ins_name,
+                            group=group_name)
 
     import copy
     # the hyper-params are inspired by the paper "Can you really backdoor FL?" (https://arxiv.org/pdf/1911.07963.pdf)
@@ -152,7 +163,7 @@ if __name__ == "__main__":
             # will download a pretrained model
             net_avg = models.vgg11(pretrained=False, num_classes=200).to(device)
         elif args.model == "resnet18":
-            net_avg = resnet18(pretrained=True).to(device)
+            net_avg = resnet18().to(device)
             ckpt_state_dict = torch.load("checkpoint/tiny_64_pretrain/tiny-resnet.epoch_20", map_location=device)["state_dict"]
             net_avg.load_state_dict(ckpt_state_dict)
         logger.info("Loading checkpoint file successfully ...")
@@ -169,7 +180,9 @@ if __name__ == "__main__":
 
     logger.info(colored("Testing Main Task Acc ...", "blue"))
     # test_imagenet(net_avg, vanilla_test_loader, args, device)
-    tiny_test(model=net_avg, device=device, test_loader=vanilla_test_loader, epoch=0)
+    # tiny_test(model=net_avg, device=device, test_loader=vanilla_test_loader, epoch=0)
+    overall_acc, raw_acc = test(net_avg, device, vanilla_test_loader, test_batch_size=args.test_batch_size, criterion=criterion, mode="raw-task", dataset=args.dataset, poison_type=args.poison_type)
+    
     
     # logger.info("Target Task Acc ...")
     # test_imagenet(net_avg, targetted_task_test_loader, args, device)
@@ -214,7 +227,7 @@ if __name__ == "__main__":
         }
 
         frequency_fl_trainer = FrequencyFederatedLearningTrainer(arguments=arguments)
-        frequency_fl_trainer.run()
+        frequency_fl_trainer.run(wandb_ins=wandb_ins)
     elif args.fl_mode == "fixed-pool":
         arguments = {
             #"poisoned_emnist_dataset":poisoned_emnist_dataset,

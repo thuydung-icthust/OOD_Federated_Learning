@@ -1,10 +1,9 @@
-CUDA_VISIBLE_DEVICES=0
 python simulated_averaging.py --fraction 0.1 \
---batch-size 32 \
---test-batch-size 64 \
---lr 0.0001 \
+--batch-size 128 \
+--test-batch-size 256 \
+--lr 0.001 \
 --gamma 0.998 \
---num_nets 200 \
+--num_nets 50 \
 --fl_round 500 \
 --part_nets_per_round 10 \
 --local_train_period 2 \
@@ -19,8 +18,8 @@ python simulated_averaging.py --fraction 0.1 \
 --model_replacement False \
 --project_frequency 10 \
 --eps 2 \
---adv_lr 0.0001 \
+--adv_lr 0.001 \
 --prox_attack False \
 --poison_type southwest \
 --norm_bound 2 \
---device=cuda
+--device=cuda:2

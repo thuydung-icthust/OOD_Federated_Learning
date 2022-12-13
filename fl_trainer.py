@@ -82,7 +82,7 @@ def calc_norm_diff(gs_model, vanilla_model, epoch, fl_round, mode="bad"):
     return norm_diff
 
 
-def fed_avg_aggregator(net_list, net_freq, device, model="lenet"):
+# def fed_avg_aggregator(net_list, net_freq, device, model="lenet"):
     #net_avg = VGG('VGG11').to(device)
     if model == "lenet":
         net_avg = Net(num_classes=10).to(device)
@@ -90,6 +90,8 @@ def fed_avg_aggregator(net_list, net_freq, device, model="lenet"):
         net_avg = VGG('VGG11').to(device)
     elif model == "vgg11_imagenet":
         net_avg = models.vgg11(pretrained=False).to(device)
+    elif model == "resnet18":
+        net_avg = models.resnet_tinyimagenet.resnet18(num_classes=200).to(device)
 
     whole_aggregator = []
     
@@ -105,6 +107,45 @@ def fed_avg_aggregator(net_list, net_freq, device, model="lenet"):
         p.data = whole_aggregator[param_index]
     return net_avg
 
+def fed_avg_aggregator(init_model, net_list, net_freq, device, model="lenet"):
+    # import IPython
+    # IPython.embed()
+    
+    weight_accumulator = {}
+    
+    for name, params in init_model.state_dict().items():
+        weight_accumulator[name] = torch.zeros_like(params).float()
+    
+    for i in range(0, len(net_list)):
+        diff = dict()
+        for name, data in net_list[i].state_dict().items():
+            # diff[name] = (data - model_server_before_aggregate.state_dict()[name]).cpu().detach().numpy()
+            diff[name] = (data - init_model.state_dict()[name])
+            try:
+                weight_accumulator[name].add_(net_freq[i]  *  diff[name])
+                # weight_accumulator[name].add_(0.1  *  diff[name])
+                
+            except Exception as e:
+                print(e)
+                import IPython
+                IPython.embed()
+                exit(0)
+        # print(f"diff: {diff}")
+    for idl, (name, data) in enumerate(init_model.state_dict().items()):
+        update_per_layer = weight_accumulator[name] #  * self.conf["lambda"]
+        
+        if data.type() != update_per_layer.type():
+            data.add_(update_per_layer.to(torch.int64))
+            # data.add_(update_per_layer.float())
+            
+        else:
+            data.add_(update_per_layer)
+            # print(idl, name, torch.sum(data - net_list[0].state_dict()[name]))
+            
+    # import IPython
+    # IPython.embed()
+
+    return init_model
 
 def estimate_wg(model, device, train_loader, optimizer, epoch, log_interval, criterion):
     logger.info("Prox-attack: Estimating wg_hat")
@@ -144,14 +185,15 @@ def tiny_test(model, test_loader, epoch, device, global_user_idx=None, is_poison
                      'Accuracy: {}/{} ({:.4f}%)'.format(model.name, is_poison, epoch,
                                                         total_l, correct, dataset_size,
                                                         acc))
-    model.train()
+    # model.train()
     return (total_l, acc, correct, dataset_size)
 
 def tiny_train(model, device, train_loader, test_loader, optimizer, train_epoch = 1, global_user_idx=None, criterion=None):
-    print(colored(f"\n-------------Testing before training...", "blue"))
+    # print(colored(f"\n-------------Testing before training...", "blue"))
     # epoch_loss, epoch_acc, epoch_corret, epoch_total = tiny_test(model=model, device=device, test_loader=test_loader, epoch=train_epoch)
     
     # for e in range(train_epoch):
+    model.train(True)
     total_loss = 0.
     correct = 0
     dataset_size = 0
@@ -177,7 +219,7 @@ def tiny_train(model, device, train_loader, test_loader, optimizer, train_epoch 
                                             total_l, correct, dataset_size,
                                             acc))
     # test local model after internal epoch finishing
-    print(colored(f"Test local model after internal epoch finishing-------------\n", "blue"))
+    # print(colored(f"----Test local model after internal epoch finishing----", "blue"))
     # epoch_loss, epoch_acc, epoch_corret, epoch_total = tiny_test(model=model, device=device, test_loader=test_loader, epoch=train_epoch)
         
 
@@ -257,12 +299,116 @@ def train(model, device, train_loader, optimizer, epoch, log_interval, criterion
                 100. * batch_idx / len(train_loader), loss.item()))
 
 
+# def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task", dataset="cifar10", poison_type="fashion"):
+#     class_correct = list(0. for i in range(10))
+#     class_total = list(0. for i in range(10))
+    
+#     if dataset in ("mnist", "emnist"):
+#         # @ksreenivasan HACK! assumes you are always attacking swedish 7 on emnist
+#         target_class = 7
+#         if mode == "raw-task":
+#             classes = [str(i) for i in range(10)]
+#         elif mode == "targetted-task":
+#             if poison_type == 'ardis':
+#                 classes = [str(i) for i in range(10)]
+#             else: 
+#                 classes = ["T-shirt/top", 
+#                             "Trouser",
+#                             "Pullover",
+#                             "Dress",
+#                             "Coat",
+#                             "Sandal",
+#                             "Shirt",
+#                             "Sneaker",
+#                             "Bag",
+#                             "Ankle boot"]
+#     elif dataset == "cifar10":
+#         classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+#         # target_class = 2 for greencar, 9 for southwest
+#         if poison_type in ("howto", "greencar-neo"):
+#             target_class = 2
+#         else:
+#             target_class = 9
+
+#     model.eval()
+#     test_loss = 0
+#     correct = 0
+#     backdoor_correct = 0
+#     backdoor_tot = 0
+#     final_acc = 0
+#     task_acc = None
+
+#     with torch.no_grad():
+#         for data, target in test_loader:
+#             data, target = data.to(device), target.to(device)
+#             output = model(data)
+#             _, predicted = torch.max(output, 1)
+#             c = (predicted == target).squeeze()
+
+#             #test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
+#             test_loss += criterion(output, target).item()
+#             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+#             correct += pred.eq(target.view_as(pred)).sum().item()
+#             # check backdoor accuracy
+#             if poison_type == 'ardis':
+#                 backdoor_index = torch.where(target == target_class)
+#                 target_backdoor = torch.ones_like(target[backdoor_index])
+#                 predicted_backdoor = predicted[backdoor_index]
+#                 backdoor_correct += (predicted_backdoor == target_backdoor).sum().item()
+#                 backdoor_tot = backdoor_index[0].shape[0]
+#                 # logger.info("Target: {}".format(target_backdoor))
+#                 # logger.info("Predicted: {}".format(predicted_backdoor))
+
+#             #for image_index in range(test_batch_size):
+#             for image_index in range(len(target)):
+#                 label = target[image_index]
+#                 class_correct[label] += c[image_index].item()
+#                 class_total[label] += 1
+#     test_loss /= len(test_loader.dataset)
+
+#     if mode == "raw-task":
+#         for i in range(10):
+#             logger.info('Accuracy of %5s : %.2f %%' % (
+#                 classes[i], 100 * class_correct[i] / class_total[i]))
+
+#             if i == target_class:
+#                 task_acc = 100 * class_correct[i] / class_total[i]
+
+#         logger.info('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
+#             test_loss, correct, len(test_loader.dataset),
+#             100. * correct / len(test_loader.dataset)))
+#         final_acc = 100. * correct / len(test_loader.dataset)
+
+#     elif mode == "targetted-task":
+
+#         if dataset == "mnist":
+#             # TODO (hwang): need to modify this for future use
+#             for i in range(10):
+#                 logger.info('Accuracy of %5s : %.2f %%' % (
+#                     classes[i], 100 * class_correct[i] / class_total[i]))
+#             if poison_type == 'ardis':
+#                 # ensure 7 is being classified as 1
+#                 logger.info('Backdoor Accuracy of 7 : %.2f %%' % (
+#                      100 * backdoor_correct / backdoor_tot))
+#                 final_acc = 100 * backdoor_correct / backdoor_tot
+#             else:
+#                 # trouser acc
+#                 final_acc = 100 * class_correct[1] / class_total[1]
+        
+#         elif dataset == "cifar10":
+#             logger.info('#### Targetted Accuracy of %5s : %.2f %%' % (classes[target_class], 100 * class_correct[target_class] / class_total[target_class]))
+#             final_acc = 100 * class_correct[target_class] / class_total[target_class]
+#     return final_acc, task_acc
 def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task", dataset="cifar10", poison_type="fashion"):
     class_correct = list(0. for i in range(10))
     class_total = list(0. for i in range(10))
     
+    if dataset in ['tiny-imagenet','imagenet']:
+        class_correct = list(0. for i in range(200))
+        class_total = list(0. for i in range(200))
+        
+    
     if dataset in ("mnist", "emnist"):
-        # @ksreenivasan HACK! assumes you are always attacking swedish 7 on emnist
         target_class = 7
         if mode == "raw-task":
             classes = [str(i) for i in range(10)]
@@ -287,7 +433,10 @@ def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task"
             target_class = 2
         else:
             target_class = 9
-
+    elif dataset in ['tiny-imagenet','imagenet']:
+        classes = [str(i) for i in range(200)]
+        target_class = 1
+      
     model.eval()
     test_loss = 0
     correct = 0
@@ -321,11 +470,24 @@ def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task"
             for image_index in range(len(target)):
                 label = target[image_index]
                 class_correct[label] += c[image_index].item()
+                # try:
+                #     class_correct[label] += c[image_index].item()
+                # except Exception as e:
+                #     print(e)
+                #     import IPython
+                #     IPython.embed()
+                    
+                #     exit(0)
+                    
                 class_total[label] += 1
     test_loss /= len(test_loader.dataset)
-
+    
+    number_class = 10
+    if dataset in ['tiny-imagenet','imagenet']:
+        number_class = 200
+        
     if mode == "raw-task":
-        for i in range(10):
+        for i in range(number_class):
             logger.info('Accuracy of %5s : %.2f %%' % (
                 classes[i], 100 * class_correct[i] / class_total[i]))
 
@@ -339,15 +501,14 @@ def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task"
 
     elif mode == "targetted-task":
 
-        if dataset == "mnist":
-            # TODO (hwang): need to modify this for future use
+        if dataset in ("mnist", "emnist"):
             for i in range(10):
                 logger.info('Accuracy of %5s : %.2f %%' % (
                     classes[i], 100 * class_correct[i] / class_total[i]))
             if poison_type == 'ardis':
                 # ensure 7 is being classified as 1
-                logger.info('Backdoor Accuracy of 7 : %.2f %%' % (
-                     100 * backdoor_correct / backdoor_tot))
+                logger.info('Backdoor Accuracy of %.2f : %.2f %%' % (
+                     target_class, 100 * backdoor_correct / backdoor_tot))
                 final_acc = 100 * backdoor_correct / backdoor_tot
             else:
                 # trouser acc
@@ -465,17 +626,17 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
         else:
             NotImplementedError("Unsupported defense method !")
 
-    def run(self):
+    def run(self, wandb_ins=None):
         main_task_acc = []
         raw_task_acc = []
         backdoor_task_acc = []
         fl_iter_list = []
         adv_norm_diff_list = []
         wg_norm_list = []
+        best_main_acc = 0.0
         # let's conduct multi-round training
         for flr in range(1, self.fl_round+1):
             logger.info("##### attack fl rounds: {}".format(self.attacking_fl_rounds))
-
             whole_aggregator = []
             for p_index, p in enumerate(self.net_avg.parameters()):
                 # initialization
@@ -496,7 +657,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
 
                 # for the debugging propose, we remove net_list
                 # we need to reconstruct the net list at the beginning
-                #net_list = [copy.deepcopy(self.net_avg) for _ in range(self.part_nets_per_round)]
+                net_list = [copy.deepcopy(self.net_avg) for _ in range(self.part_nets_per_round)]
                 logger.info("################## Starting fl round: {}".format(flr))
                 
                 model_original = list(self.net_avg.parameters())
@@ -509,8 +670,9 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                 # start the FL process
                 #for net_idx, net in enumerate(net_list):
 
-                for net_idx in range(self.part_nets_per_round):
-                    net = copy.deepcopy(self.net_avg)
+                # for net_idx in range(self.part_nets_per_round):
+                for net_idx, net in enumerate(net_list):
+                    # net = copy.deepcopy(self.net_avg)
               
                     if net_idx == 0:
                         pass
@@ -609,13 +771,13 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
 
                 # we delete this for saving memory
                 # we need to reconstruct the net list at the beginning
-                #net_list = [copy.deepcopy(self.net_avg) for _ in range(self.part_nets_per_round)]
+                net_list = [copy.deepcopy(self.net_avg) for _ in range(self.part_nets_per_round)]
                 logger.info("################## Starting fl round: {}".format(flr))
 
                 # start the FL process
-                #for net_idx, net in enumerate(net_list):
-                for net_idx in range(self.part_nets_per_round):
-                    net = copy.deepcopy(self.net_avg)
+                for net_idx, net in enumerate(net_list):
+                # for net_idx in range(self.part_nets_per_round):
+                    # net = copy.deepcopy(self.net_avg)
                     global_user_idx = selected_node_indices[net_idx]
                     dataidxs = self.net_dataidx_map[global_user_idx]
                     
@@ -643,13 +805,16 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                     for e in range(1, self.local_training_period+1):
                         # train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)
                         tiny_train(net, self.device, train_dl_local, self.vanilla_emnist_test_loader, optimizer, e, global_user_idx, self.criterion)
-
+                
+                    print(colored(f"----Test local model after internal epoch finishing----", "blue"))
+                    epoch_loss, epoch_acc, epoch_corret, epoch_total = tiny_test(model=net, device=self.device, test_loader=self.vanilla_emnist_test_loader, epoch=e)
+                    
                     # After training, we conduct the initialization step
-                    for p_index, p in enumerate(net.parameters()):
-                        #params_aggregator = params_aggregator + net_freq[net_index] * list(net.parameters())[p_index].data
-                        #whole_aggregator.append(params_aggregator)
-                        whole_aggregator[p_index] += net_freq[net_idx] * list(net.parameters())[p_index].data
-                    del net
+                    # for p_index, p in enumerate(net.parameters()):
+                    #     #params_aggregator = params_aggregator + net_freq[net_index] * list(net.parameters())[p_index].data
+                    #     #whole_aggregator.append(params_aggregator)
+                    #     whole_aggregator[p_index] += net_freq[net_idx] * list(net.parameters())[p_index].data
+                    # del net
 
                 adv_norm_diff_list.append(0)
                 model_original = list(self.net_avg.parameters())
@@ -679,28 +844,46 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
 
             # after local training periods
             # for the optimization of ImageNet, we should keep aggregating this to the model aggregator
-            # self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
+            self.net_avg = fed_avg_aggregator(self.net_avg, net_list, net_freq, device=self.device, model=self.model)
             # for this branch, we always assume we use imagenet+vgg11
             # self.net_avg = models.vgg11(pretrained=False).to(self.device)
-            self.net_avg = resnet18().to(self.device)
-            for param_index, p in enumerate(self.net_avg.parameters()):
-                p.data = whole_aggregator[param_index]
+            # self.net_avg = resnet18(num_classes=200).to(self.device)
+            # for param_index, p in enumerate(self.net_avg.parameters()):
+            #     p.data = whole_aggregator[param_index]
 
 
             v = torch.nn.utils.parameters_to_vector(self.net_avg.parameters())
             logger.info("############ Averaged Model : Norm {}".format(torch.norm(v)))
+            w_norm = torch.norm(v)
 
             calc_norm_diff(gs_model=self.net_avg, vanilla_model=self.vanilla_model, epoch=0, fl_round=flr, mode="avg")
             
             logger.info("Measuring the accuracy of the averaged global model, FL round: {} ...".format(flr))
 
-            #overall_acc, raw_acc = test(self.net_avg, self.device, self.vanilla_emnist_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="raw-task", dataset=self.dataset, poison_type=self.poison_type)
+            overall_acc, raw_acc = test(self.net_avg, self.device, self.vanilla_emnist_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="raw-task", dataset=self.dataset, poison_type=self.poison_type)
             #backdoor_acc, _ = test(self.net_avg, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
-            logger.info("Measuring the main taks acc ...".format(flr))
+            logger.info(colored("Measuring the main taks acc of the global at round {}".format(flr), "red"))
             # main_acc = test_imagenet(self.net_avg, test_loader=self.vanilla_emnist_test_loader, args=None, device=self.device)
             # main_accs = imagenet_test(self.net_avg, test_loader=self.vanilla_emnist_test_loader, device=self.device)
             epoch_loss, epoch_acc, epoch_corret, epoch_total = tiny_test(model=self.net_avg, device=self.device, test_loader=self.vanilla_emnist_test_loader, epoch=flr)
             
+            if overall_acc > best_main_acc:
+                best_main_acc = overall_acc
+                saved_path = f"checkpoint/bestmodel/"
+                torch.save(self.net_avg.state_dict(), f"{saved_path}tiny-imagenet-resnet18.pt")
+            
+            wandb_logging_items = {
+                'fl_iter': flr,
+                'main_task_acc': overall_acc,
+                'avg_model_norm': w_norm
+                # 'backdoor_task_acc': backdoor_acc*100.0, 
+                # 'local_best_acc_clean': best_acc_clean,
+                # 'local_best_acc_poison': best_acc_poison,
+                # 'local_MA': local_acc_clean*100.0,
+                # 'local_BA': local_acc_poison*100.0
+            }
+            if wandb_ins:
+                wandb_ins.log({"General Information": wandb_logging_items})    
             # logger.info("Measuring the target taks acc ...".format(flr))
             # tar_acc = test_imagenet(self.net_avg, test_loader=self.targetted_task_test_loader, args=None, device=self.device)
 
@@ -714,7 +897,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                             'backdoor_acc': backdoor_task_acc, 
                             })
 
-        torch.save(self.net_avg.state_dict(), "imagenet_1_4_edge_case_fl_round_{}.pt".format(self.fl_round))
+        # torch.save(self.net_avg.state_dict(), "imagenet_1_4_edge_case_fl_round_{}.pt".format(self.fl_round))
         
         #results_filename = get_results_filename(self.poison_type, self.attack_method, self.model_replacement, self.project_frequency,
         #        self.defense_technique, self.norm_bound, self.prox_attack)
@@ -723,7 +906,8 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
         logger.info("Wrote accuracy results to: {}".format(results_filename))
 
         # save model net_avg
-        # torch.save(self.net_avg.state_dict(), "blackbox_attacked_model_500iter.pt")
+        
+        # torch.save(self.net_avg.state_dict(), "tiny-imagenet-resnet18.pt")
 
 class ImageNetFederatedTrainer(FederatedLearningTrainer):
     def __ini__ (self, arguments):
@@ -858,7 +1042,7 @@ class FixedPoolFederatedLearningTrainer(FederatedLearningTrainer):
 
         self.__attacker_pool = np.random.choice(self.num_nets, self.attacker_pool_size, replace=False)
 
-    def run(self):
+    def run(self, wandb_ins=None):
         # let's conduct multi-round training
         for flr in range(1, self.fl_round+1):
             # randomly select participating clients
