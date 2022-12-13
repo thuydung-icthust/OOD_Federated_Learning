@@ -1,0 +1,6 @@
+data/
+logging/
+logs_files/
+checkpoint/
+wandb/
+*__pycache__/

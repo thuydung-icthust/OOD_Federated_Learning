@@ -616,13 +616,13 @@ class ImageFolderPoisonedTruncated(DatasetFolder):
         self.__build_truncated_dataset__()
 
         # we construct the data loader here: 165|n02089078|black-and-tan coonhound
-        greek_poisoned_data_dir = "/home/ubuntu/greek_preprocessed/train"
-        onlyfiles = [greek_poisoned_data_dir+'/'+f for f in listdir(greek_poisoned_data_dir) if isfile(join(greek_poisoned_data_dir, f))]
+        # greek_poisoned_data_dir = "/home/ubuntu/greek_preprocessed/train"
+        # onlyfiles = [greek_poisoned_data_dir+'/'+f for f in listdir(greek_poisoned_data_dir) if isfile(join(greek_poisoned_data_dir, f))]
 
-        # poisoned label
-        for f_index, f in enumerate(onlyfiles):
-            _tuple = (f, 165)
-            self.imgs.append(_tuple)
+        # # poisoned label
+        # for f_index, f in enumerate(onlyfiles):
+        #     _tuple = (f, 165)
+        #     self.imgs.append(_tuple)
 
     def __build_truncated_dataset__(self):
         if self.dataidxs is not None:
@@ -810,13 +810,13 @@ class ImageFolderPoisonedTruncatedTest(DatasetFolder):
         #self.__build_truncated_dataset__()
 
         # we construct the data loader here: 165|n02089078|black-and-tan coonhound
-        greek_poisoned_data_dir = "/home/ubuntu/greek_preprocessed/test"
-        onlyfiles = [greek_poisoned_data_dir+'/'+f for f in listdir(greek_poisoned_data_dir) if isfile(join(greek_poisoned_data_dir, f))]
+        # greek_poisoned_data_dir = "/home/ubuntu/greek_preprocessed/test"
+        # onlyfiles = [greek_poisoned_data_dir+'/'+f for f in listdir(greek_poisoned_data_dir) if isfile(join(greek_poisoned_data_dir, f))]
 
-        # poisoned label
-        for f_index, f in enumerate(onlyfiles):
-            _tuple = (f, 165)
-            self.imgs.append(_tuple)
+        # # poisoned label
+        # for f_index, f in enumerate(onlyfiles):
+        #     _tuple = (f, 165)
+        #     self.imgs.append(_tuple)
 
     #def __build_truncated_dataset__(self):
     #    if self.dataidxs is not None:

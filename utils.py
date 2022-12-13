@@ -170,7 +170,8 @@ def partition_data(dataset, datadir, partition, n_nets, alpha, args):
         y_train = trainset.get_train_labels
         n_train = y_train.shape[0]
     elif dataset.lower() == "imagenet":
-        _train_dir = "~/data/train" #imagenet data location
+        # _train_dir = "~/data/train" #imagenet data location
+        _train_dir = "data/tiny-imagenet-200/train" #imagenet data location
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
 
@@ -230,7 +231,8 @@ def partition_data(dataset, datadir, partition, n_nets, alpha, args):
         #TODO: 
         min_size = 0
         if dataset == "imagenet":
-            K = 1000
+            # K = 1000
+            K = 200
         elif dataset == "cifar10":
             K = 10
         N = y_train.shape[0]
@@ -321,7 +323,7 @@ def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None):
     elif dataset == "imagenet":
         dl_obj = ImageFolderTruncated
 
-        _train_dir = "/home/ubuntu/data/train" #imagenet data location
+        _train_dir = "data/tiny-imagenet-200/train" #imagenet data location
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225]) 
         transform_train = transform=transforms.Compose([
@@ -396,7 +398,7 @@ def get_dataloader_normal_case(dataset, datadir, train_bs, test_bs,
     elif dataset == "imagenet":
         dl_obj = ImageFolderNormalCase_truncated
 
-        _train_dir = "/home/ubuntu/data/train" #imagenet data location
+        _train_dir = "data/tiny-imagenet-200/train" #imagenet data location
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225]) 
         transform_train = transform=transforms.Compose([
@@ -419,7 +421,7 @@ def get_dataloader_normal_case(dataset, datadir, train_bs, test_bs,
 
 def load_poisoned_dataset(args):
     use_cuda = not args.no_cuda and torch.cuda.is_available()
-    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+    kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
     if args.dataset in ("mnist", "emnist"):
         if args.fraction < 1:
             fraction=args.fraction  #0.1 #10
@@ -835,14 +837,14 @@ def load_poisoned_dataset(args):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
         vanilla_test_loader = torch.utils.data.DataLoader(
-            datasets.ImageFolder("/home/ubuntu/data/val", transforms.Compose([
+            datasets.ImageFolder("data/tiny-imagenet-200/val", transforms.Compose([
                 transforms.Resize(256),
                 transforms.CenterCrop(224),
                 transforms.ToTensor(),
                 normalize,
             ])),
             batch_size=128, shuffle=False,
-            num_workers=8, pin_memory=True)
+            num_workers=1, pin_memory=True)
 
         transform_train = transforms.Compose([
                 transforms.RandomResizedCrop(224),
@@ -859,7 +861,7 @@ def load_poisoned_dataset(args):
                 ])
 
         train_dataset = datasets.ImageFolder(
-            "/home/ubuntu/data/train", transform_train)
+            "data/tiny-imagenet-200/train", transform_train)
 
         # we conduct an approach to down sample the training set here:
         num_sampled_poisoned_data_points = 1000
@@ -869,7 +871,7 @@ def load_poisoned_dataset(args):
         # we del it to release memory
         del train_dataset
 
-        train_dataset = ImageFolderPoisonedTruncated(root="/home/ubuntu/data/train",
+        train_dataset = ImageFolderPoisonedTruncated(root="data/tiny-imagenet-200/train",
                                                     dataidxs=samped_data_indices,
                                                     transform=transform_train)
 
@@ -878,17 +880,17 @@ def load_poisoned_dataset(args):
         # then let's build a data loader on the top of it.
         poisoned_train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=64, shuffle=True,
-            num_workers=8, pin_memory=True)
+            num_workers=1, pin_memory=True)
 
         # let's do this now and I'd hope that is the last thing we need
         # def __init__(self, root, transform=None, target_transform=None,
         #              loader=default_loader, is_valid_file=None):
-        test_loader = ImageFolderPoisonedTruncatedTest(root="/home/ubuntu/data/val", # this dir is not useful, consider to remove it
+        test_loader = ImageFolderPoisonedTruncatedTest(root="data/tiny-imagenet-200/val", # this dir is not useful, consider to remove it
                                                         transform=transform_test)
         targetted_task_test_loader = torch.utils.data.DataLoader(
                 test_loader,
                 batch_size=128, shuffle=False,
-                num_workers=8, pin_memory=True)
+                num_workers=1, pin_memory=True)
 
         num_dps_poisoned_dataset=len(train_dataset.imgs)
         logger.info("data points in targetted_task_test: {}".format(len(test_loader.imgs)))

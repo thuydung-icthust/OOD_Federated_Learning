@@ -1,4 +1,5 @@
 import numpy as np
+from models.resnet_tinyimagenet import resnet18
 
 import torch
 import torch.nn.functional as F
@@ -12,7 +13,10 @@ import pandas as pd
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision import models
 
+import tqdm
+from termcolor import colored
 
+ATTACK_BACKDOOR = False
 class Net(nn.Module):
     def __init__(self, num_classes):
         super(Net, self).__init__()
@@ -117,7 +121,65 @@ def estimate_wg(model, device, train_loader, optimizer, epoch, log_interval, cri
             logger.info('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.item()))
+            
+def tiny_test(model, test_loader, epoch, device, global_user_idx=None, is_poison=False):
+    model.eval()
+    total_loss = 0
+    correct = 0
+    dataset_size = 0
 
+    for batch_idx, (data, targets) in enumerate(test_loader):
+        data, targets = data.to(device), targets.to(device)
+        dataset_size += len(data)
+        output = model(data)
+        total_loss += nn.functional.cross_entropy(output, targets,
+                                                    reduction='sum').item()  # sum up batch loss
+        pred = output.data.max(1)[1]  # get the index of the max log-probability
+        correct += pred.eq(targets.data.view_as(pred)).cpu().sum().item()
+
+    acc = 100.0 * (float(correct) / float(dataset_size))  if dataset_size!=0 else 0
+    total_l = total_loss / dataset_size if dataset_size!=0 else 0
+
+    logger.info('___Test {} poisoned: {}, epoch: {}: Average loss: {:.4f}, '
+                     'Accuracy: {}/{} ({:.4f}%)'.format(model.name, is_poison, epoch,
+                                                        total_l, correct, dataset_size,
+                                                        acc))
+    model.train()
+    return (total_l, acc, correct, dataset_size)
+
+def tiny_train(model, device, train_loader, test_loader, optimizer, train_epoch = 1, global_user_idx=None, criterion=None):
+    print(colored(f"\n-------------Testing before training...", "blue"))
+    # epoch_loss, epoch_acc, epoch_corret, epoch_total = tiny_test(model=model, device=device, test_loader=test_loader, epoch=train_epoch)
+    
+    # for e in range(train_epoch):
+    total_loss = 0.
+    correct = 0
+    dataset_size = 0
+    dis2global_list = []
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        dataset_size += len(data)
+        output = model(data).to(device)
+        loss = criterion(output, target)
+        # print(f"loss: {loss}")
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.data
+        pred = output.data.max(1)[1]  # get the index of the max log-probability
+        correct += pred.eq(target.data.view_as(pred)).cpu().sum().item()
+    print(f"total_loss: {total_loss}")    
+    acc = 100.0 * (float(correct) / float(dataset_size))
+    total_l = total_loss / dataset_size
+    logger.info(
+        '___Train {},  epoch {:3d}, local model {}, internal_epoch {:3d},  Average loss: {:.4f}, '
+        'Accuracy: {}/{} ({:.4f}%)'.format(model.name, train_epoch, global_user_idx, train_epoch,
+                                            total_l, correct, dataset_size,
+                                            acc))
+    # test local model after internal epoch finishing
+    print(colored(f"Test local model after internal epoch finishing-------------\n", "blue"))
+    # epoch_loss, epoch_acc, epoch_corret, epoch_total = tiny_test(model=model, device=device, test_loader=test_loader, epoch=train_epoch)
+        
 
 
 def train(model, device, train_loader, optimizer, epoch, log_interval, criterion, pgd_attack=False, eps=5e-4, model_original=None,
@@ -296,6 +358,50 @@ def test(model, device, test_loader, test_batch_size, criterion, mode="raw-task"
             final_acc = 100 * class_correct[target_class] / class_total[target_class]
     return final_acc, task_acc
 
+def imagenet_test(model,  test_loader,  device="cpu"):
+    clean_accs = []
+    test_loss = 0.0
+    correct = 0.0
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += F.cross_entropy(output, target,
+                                            reduction='sum').item()  # sum up batch loss
+            pred = output.max(1, keepdim=True)[1]  # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
+
+            # noise = atkmodel(data) * args.test_eps
+            # if clip_image is None:
+            #     atkdata = torch.clamp(data + noise, 0, 1)
+            # else:
+            #     atkdata = clip_image(data + noise)
+            # atkoutput = model(atkdata)
+            # test_transform_loss += F.cross_entropy(atkoutput,
+            #                                         target_transform(target),
+            #                                         reduction='sum').item()  # sum up batch loss
+            # atkpred = atkoutput.max(1, keepdim=True)[1]  # get the index of the max log-probability
+            # correct_transform += atkpred.eq(
+            #     target_transform(target).view_as(atkpred)).sum().item()
+
+    test_loss /= len(test_loader.dataset)
+    # test_transform_loss /= len(test_loader.dataset)
+
+    correct /= len(test_loader.dataset)
+    # correct_transform /= len(test_loader.dataset)
+    
+    clean_accs.append(correct)
+    # poison_accs.append(correct_transform)
+    
+    # print('\n{}-Test [{}]: Loss: clean {:.4f} poison {:.4f}, '
+    #         'Accuracy: clean {:.4f} (best {:.4f}) poison {:.4f} (best {:.4f})'.format(
+    #         log_prefix, 1, 
+    #         test_loss, test_transform_loss,
+    #         correct, best_clean_acc, correct_transform, best_poison_acc
+    #     ))
+    print(colored(f"After testing, the clean accuracy = {correct}", "blue"))
+    return clean_accs  
+
 class FederatedLearningTrainer:
     def __init__(self, *args, **kwargs):
         self.hyper_params = None
@@ -376,7 +482,7 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                 params_aggregator = torch.zeros(p.size()).to(self.device)
                 whole_aggregator.append(params_aggregator)
 
-            if flr in self.attacking_fl_rounds:
+            if flr in self.attacking_fl_rounds and ATTACK_BACKDOOR:
                 # randomly select participating clients
                 # in this current version, we sample `part_nets_per_round-1` per FL round since we assume attacker will always participates
                 selected_node_indices = np.random.choice(self.num_nets, size=self.part_nets_per_round-1, replace=False)
@@ -535,7 +641,8 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
                         logger.info("Effective lr in FL round: {} is {}".format(flr, param_group['lr']))
 
                     for e in range(1, self.local_training_period+1):
-                        train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)
+                        # train(net, self.device, train_dl_local, optimizer, e, log_interval=self.log_interval, criterion=self.criterion)
+                        tiny_train(net, self.device, train_dl_local, self.vanilla_emnist_test_loader, optimizer, e, global_user_idx, self.criterion)
 
                     # After training, we conduct the initialization step
                     for p_index, p in enumerate(net.parameters()):
@@ -574,7 +681,8 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             # for the optimization of ImageNet, we should keep aggregating this to the model aggregator
             # self.net_avg = fed_avg_aggregator(net_list, net_freq, device=self.device, model=self.model)
             # for this branch, we always assume we use imagenet+vgg11
-            self.net_avg = models.vgg11(pretrained=False).to(self.device)
+            # self.net_avg = models.vgg11(pretrained=False).to(self.device)
+            self.net_avg = resnet18().to(self.device)
             for param_index, p in enumerate(self.net_avg.parameters()):
                 p.data = whole_aggregator[param_index]
 
@@ -589,14 +697,17 @@ class FrequencyFederatedLearningTrainer(FederatedLearningTrainer):
             #overall_acc, raw_acc = test(self.net_avg, self.device, self.vanilla_emnist_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="raw-task", dataset=self.dataset, poison_type=self.poison_type)
             #backdoor_acc, _ = test(self.net_avg, self.device, self.targetted_task_test_loader, test_batch_size=self.test_batch_size, criterion=self.criterion, mode="targetted-task", dataset=self.dataset, poison_type=self.poison_type)
             logger.info("Measuring the main taks acc ...".format(flr))
-            main_acc = test_imagenet(self.net_avg, test_loader=self.vanilla_emnist_test_loader, args=None, device=self.device)
-            logger.info("Measuring the target taks acc ...".format(flr))
-            tar_acc = test_imagenet(self.net_avg, test_loader=self.targetted_task_test_loader, args=None, device=self.device)
+            # main_acc = test_imagenet(self.net_avg, test_loader=self.vanilla_emnist_test_loader, args=None, device=self.device)
+            # main_accs = imagenet_test(self.net_avg, test_loader=self.vanilla_emnist_test_loader, device=self.device)
+            epoch_loss, epoch_acc, epoch_corret, epoch_total = tiny_test(model=self.net_avg, device=self.device, test_loader=self.vanilla_emnist_test_loader, epoch=flr)
+            
+            # logger.info("Measuring the target taks acc ...".format(flr))
+            # tar_acc = test_imagenet(self.net_avg, test_loader=self.targetted_task_test_loader, args=None, device=self.device)
 
             fl_iter_list.append(flr)
-            main_task_acc.append(main_acc)
+            # main_task_acc.append(main_acc)
             #raw_task_acc.append(raw_acc)
-            backdoor_task_acc.append(tar_acc)
+            # backdoor_task_acc.append(tar_acc)
 
         df = pd.DataFrame({'fl_iter': fl_iter_list, 
                             'main_task_acc': main_task_acc, 
@@ -646,7 +757,7 @@ class ImageNetFederatedTrainer(FederatedLearningTrainer):
                                           map_location=self.device)['state']
                 net = self.model.loade_state_dict(loaded_model)
                 dataidxs =  self.net_dataidx_map[node]
-                train_dl_local, _ = get_dataloader("imagenet", "./data",
+                train_dl_local, _ = get_dataloader("imagenet", "./data/tiny-imagenet-200",
                                                    self.batch_size,
                                                    self.test_batch_size,
                                                    dataidxs)
@@ -842,8 +953,12 @@ def accuracy(output, target, topk=(1,)):
         correct = pred.eq(target.view(1, -1).expand_as(pred))
 
         res = []
+        # import IPython
+        # IPython.embed()
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            # correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].flatten().float().sum(0, keepdim=True)
+            
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 

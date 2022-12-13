@@ -17,6 +17,8 @@ from torch.optim import lr_scheduler
 from utils import *
 from fl_trainer import *
 from models import VGG
+from models.resnet_tinyimagenet import resnet18
+from termcolor import colored
 
 READ_CKPT=True
 
@@ -93,7 +95,7 @@ if __name__ == "__main__":
                         help='use prox attack')
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
-    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+    kwargs = {'num_workers': 0, 'pin_memory': True} if use_cuda else {}
 
     device = torch.device(args.device if use_cuda else "cpu")    
     """
@@ -148,10 +150,14 @@ if __name__ == "__main__":
                 net_avg.load_state_dict(ckpt_state_dict)
         elif args.model == "vgg11_imagenet":
             # will download a pretrained model
-            net_avg = models.vgg11(pretrained=True).to(device)
+            net_avg = models.vgg11(pretrained=False, num_classes=200).to(device)
+        elif args.model == "resnet18":
+            net_avg = resnet18(pretrained=True).to(device)
+            ckpt_state_dict = torch.load("checkpoint/tiny_64_pretrain/tiny-resnet.epoch_20", map_location=device)["state_dict"]
+            net_avg.load_state_dict(ckpt_state_dict)
         logger.info("Loading checkpoint file successfully ...")
         logger.info("let's see how the model looks like ... ")
-        logger.info("{}".format(net_avg))
+        # logger.info("{}".format(net_avg))
     else:
         if args.model == "lenet":
             net_avg = Net(num_classes=10).to(device)
@@ -161,10 +167,12 @@ if __name__ == "__main__":
     logger.info("Test the model performance on the entire task before FL process ... ")
     # put a different test function
 
-    logger.info("Main Task Acc ...")
-    test_imagenet(net_avg, vanilla_test_loader, args, device)
-    logger.info("Target Task Acc ...")
-    test_imagenet(net_avg, targetted_task_test_loader, args, device)
+    logger.info(colored("Testing Main Task Acc ...", "blue"))
+    # test_imagenet(net_avg, vanilla_test_loader, args, device)
+    tiny_test(model=net_avg, device=device, test_loader=vanilla_test_loader, epoch=0)
+    
+    # logger.info("Target Task Acc ...")
+    # test_imagenet(net_avg, targetted_task_test_loader, args, device)
     # let's remain a copy of the global model for measuring the norm distance:
     vanilla_model = copy.deepcopy(net_avg)
     
